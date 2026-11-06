@@ -7,8 +7,11 @@ import { existsSync } from 'fs'
 // 必须在任何会读取 userData 路径的模块加载之前执行
 if (!app.isPackaged) {
   // 多个 worktree 可显式隔离开发实例，避免其中一个分支抢走另一分支的 Chromium SingletonLock。
+  // 隔离靠 setPath 换 userData 目录即可（SingletonLock 文件在 userData 内）。
+  // 不要按实例 app.setName：safeStorage 的 Keychain 条目（svce "<app> Safe Storage" /
+  // acct "<app> Key"）跟随 app.name，按实例命名会让每个实例的首次查找必然 miss，
+  // 在 HOME 隔离环境（无 login keychain）还会每次启动弹「找不到钥匙串」。
   const instance = process.env.PROMA_DEV_INSTANCE?.replace(/[^a-zA-Z0-9_-]/g, '')
-  if (instance) app.setName(`Proma-${instance}`)
   app.setPath('userData', join(app.getPath('appData'), instance ? `@proma/electron-dev-${instance}` : '@proma/electron-dev'))
 }
 
