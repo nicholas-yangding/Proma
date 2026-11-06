@@ -25,7 +25,7 @@ if (process.platform !== 'darwin') {
 }
 if (!existsSync(source)) throw new Error(`EventKit addon source not found: ${source}`)
 // CI 不会预热 ~/.cache/node-gyp；按当前 Node 版本拉取一次 header，随后复用缓存。
-if (!existsSync(resolve(nodeApiHeaders, 'node_api.h'))) execFileSync('npx', ['node-gyp', 'install', nodeVersion], { stdio: 'inherit' })
+if (!existsSync(resolve(nodeApiHeaders, 'node_api.h'))) execFileSync('bun', ['x', '--no-install', 'node-gyp', 'install', nodeVersion], { stdio: 'inherit' })
 if (!existsSync(resolve(napiHeaders, 'napi.h')) || !existsSync(resolve(nodeApiHeaders, 'node_api.h'))) throw new Error(`Node-API headers not found for Node ${nodeVersion}`)
 mkdirSync(dirname(output), { recursive: true })
 rmSync(output, { force: true })

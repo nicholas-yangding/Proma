@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, mock, test } from 'b
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import * as os from 'node:os'
 import { join } from 'node:path'
+import { createElectronMock } from './test-support/electron-mock'
 import { serializeCodexCredentials } from '@proma/shared'
 
 type ChannelManagerModule = typeof import('./channel-manager')
@@ -11,32 +12,19 @@ let tempHome: string
 const originalHome = process.env.HOME
 const originalPromaDev = process.env.PROMA_DEV
 
-mock.module('electron', () => ({
-  app: {
-    isPackaged: true,
-    getPath: () => join(process.env.HOME ?? tempHome, 'Library', 'Application Support'),
-  },
-  safeStorage: {
-    isEncryptionAvailable: () => false,
-    encryptString: (value: string) => Buffer.from(value),
-    decryptString: (value: Buffer) => value.toString('utf-8'),
-  },
-  shell: {
-    openExternal: async () => undefined,
-  },
-}))
+mock.module('electron', () => createElectronMock(() => tempHome))
 
 mock.module('node:os', () => ({
   ...os,
   homedir: () => tempHome,
 }))
 
-function writeChannels(channels: unknown[]): void {
+function writeChannels(channels: unknown[], version = 2): void {
   const configDir = join(tempHome, '.proma')
   mkdirSync(configDir, { recursive: true })
   writeFileSync(
     join(configDir, 'channels.json'),
-    JSON.stringify({ version: 2, channels }),
+    JSON.stringify({ version, channels }),
     'utf-8',
   )
 }
@@ -67,6 +55,28 @@ afterAll(() => {
 })
 
 describe('渠道运行时认证解析', () => {
+  test.each([2, 99])('Given v%i 配置含已下线 Provider When 读取渠道 Then 清理旧套餐并保留火山引擎 API', (version) => {
+    writeChannels(['doubao', 'ark-coding-plan', 'doubao-api'].map((provider) => ({
+      id: provider,
+      name: provider,
+      provider,
+      baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
+      apiKey: 'test-key',
+      models: [],
+      enabled: true,
+      createdAt: 1,
+      updatedAt: 1,
+    })), version)
+
+    const channels = channelManager.listChannels()
+    const providers = channels.map((channel) => channel.provider)
+    expect(providers).toContain('doubao-api')
+    expect(providers).not.toContain('doubao')
+    expect(providers).not.toContain('ark-coding-plan')
+    // 重复读取应保持迁移结果，不能把下线套餐重新加入。
+    expect(channelManager.listChannels().map((channel) => channel.id)).toEqual(channels.map((channel) => channel.id))
+  })
+
   test('Given ChatGPT OAuth 渠道 When 解析运行时 key Then 返回 access token 而不是凭据 JSON', async () => {
     writeChannels([
       {

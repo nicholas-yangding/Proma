@@ -1,15 +1,16 @@
-import { afterEach, describe, expect, mock, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test'
+import * as proxySettingsService from './proxy-settings-service'
 
-const getEffectiveProxyUrl = mock<() => Promise<string | undefined>>()
-
-mock.module('./proxy-settings-service', () => ({ getEffectiveProxyUrl }))
+let getEffectiveProxyUrl: ReturnType<typeof spyOn<typeof proxySettingsService, 'getEffectiveProxyUrl'>>
 
 const { buildOAuthNoProxy, readNoProxyEnvironment, runWithOAuthProxyScope } = await import('./oauth-proxy-scope')
 const { getPiRequestProxyDispatcher } = await import('./adapters/pi-request-proxy')
 
-afterEach(() => {
-  getEffectiveProxyUrl.mockReset()
+beforeEach(() => {
+  getEffectiveProxyUrl = spyOn(proxySettingsService, 'getEffectiveProxyUrl')
 })
+
+afterEach(() => getEffectiveProxyUrl.mockRestore())
 
 describe('OAuth proxy scope', () => {
   test('Given a user NO_PROXY list When building OAuth exclusions Then preserves it and includes every loopback host', () => {
