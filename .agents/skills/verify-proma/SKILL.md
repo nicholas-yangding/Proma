@@ -44,11 +44,11 @@ VITE_PID=$!   # 记住，cleanup 用
 
 **复用模式**：若 5173 已被**本 worktree 自己的 vite 进程**占用（`ps -p $(lsof -ti:5173) -o command=` 显示本仓库路径下的 `vite dev` 或 `vite preview`），直接复用它、不再起 vite（此时 `VITE_PID` 留空，cleanup 跳过 vite）。Electron 只从 5173 拉取 renderer，dev 与 preview server 都满足。复用 dev server 时注意用户可能正在改代码（HMR 会影响验证中的页面）；复用 preview 时确认 `dist/renderer` 与 `dist/main.cjs`、`dist/preload.cjs` 构建时间一致。被**其他**进程占用则中止报告。
 
-起 Electron（`electron .` 未打包 = 开发模式：配置目录走 `~/.proma-dev`，渲染进程走 5173）。驱动通道用 Node inspector（`--inspect`，helper 依赖它；Chromium 内建 `--remote-debugging-port` 在本应用主进程下实测不响应，勿用）：
+起 Electron（`electron .` 未打包 = 开发模式：配置目录走 `~/.proma-dev`，渲染进程走 5173）。驱动通道用 Node inspector（`--inspect`，helper 依赖它；Chromium 内建 `--remote-debugging-port` 在本应用主进程下实测不响应，勿用）。**`--use-mock-keychain` 必须带上**（见下方根因记录）：缺它时 safeStorage 首次访问真实 Keychain 若触发系统授权弹窗，主进程会被同步 XPC 等待整个堵死，CDP/inspector 全部无响应：
 
 ```bash
 cd "$REPO/apps/electron"
-HOME="$VFY_HOME" PROMA_DEV_INSTANCE="$VFY_ID" bunx electron . --inspect=$CDP_PORT \
+HOME="$VFY_HOME" PROMA_DEV_INSTANCE="$VFY_ID" bunx electron . --inspect=$CDP_PORT --use-mock-keychain \
   > "$LOG_DIR/electron.log" 2>&1 &
 ELECTRON_PID=$!   # 记住，cleanup 用
 ```
@@ -61,7 +61,7 @@ ELECTRON_PID=$!   # 记住，cleanup 用
 
 **每次验证必须用新的 $VFY_ID**：复用旧 ID 会撞上一个实例的 userData 单实例锁，新实例静默早退（日志短、无 `[IPC]` 注册行、窗口列表空），这是启动排障的第一嫌疑。
 
-**已知阻塞（2026-11-05 记录）**：当前工作区（含未提交改动）下，主进程完整启动后陷入 JS 无限递归死锁，`--inspect` 与 `--remote-debugging-port` 的请求-响应全部无响应（连接可建立）。对照：同版本最小 Electron app 两通道均正常，根因在应用主进程；sample 证据存 `~/.proma-verify/evidence/vfy-20261105223345/main-thread-sample.txt`。**死锁修复前，本 skill 的 prove 不可完成**；修复后按本文件完整重跑 prove（launch → doctor → 驱动 onboarding → cleanup）。
+**历史死锁根因（2026-11-06 已定位并修复，详见 `~/.proma-verify/evidence/vfy-dl-20261106160022/PROVE-REPORT.md`）**：2026-11-05 的 prove 曾被「主进程启动后全部驱动通道无响应」阻塞。sample 证据显示主线程被 **macOS Keychain 同步授权等待**堵死（SecItemAdd → makeLoginAuthUI → AuthorizationCopyRights → 同步 XPC mach_msg），JS 层的「无限递归」帧只是该等待的包装。触发是一次性系统授权状态（「Electron Safe Storage」条目当日未能创建），11-06 起不再复现。修复 = 启动命令强制 `--use-mock-keychain`，验证实例的 safeStorage 走内存 mock，机制上不可能再被 Keychain 弹窗阻塞（已用真实 UI 建渠道验证加密落盘正常且真实 Keychain 零触碰）。**排障提示**：若未来再现同类全通道无响应，先 `sample $ELECTRON_PID 3 -file /tmp/s.txt` 看主线程是否停在 SecItemAdd/mach_msg——是则属 Keychain 授权阻塞，确认启动命令带了 mock flag，不要盲目重启。
 
 空的 `$VFY_HOME` → `$VFY_HOME/.proma-dev/settings.json` 不存在 → 首启落在 OnboardingView（引导流程，见 features/onboarding.md）。这就是从空数据目录到达的可用状态，无需 seed 数据。应用配置、会话全部落在 `$VFY_HOME/.proma-dev/`（开发模式目录，不会碰用户正式版 `~/.proma/`）；Electron userData 落在 `$VFY_HOME/Library/Application Support/@proma/electron-dev-$VFY_ID`（由 `PROMA_DEV_INSTANCE` 派生，见 `apps/electron/src/main/index.ts` 与 `src/main/lib/config-paths.ts`）。
 
@@ -78,7 +78,7 @@ tail -40 "$LOG_DIR/electron.log"                                # 主进程日�
 tail -40 "$LOG_DIR/vite.log"
 ```
 
-若 inspector 的 HTTP discovery 通、但任何 CDP 命令（含 `targets`）长时间无响应：**主进程大概率死锁**（进程空闲、托盘在，都是假象）。确认方法：`sample $ELECTRON_PID 3 -file /tmp/s.txt`，看主线程栈是否有同一 JS 帧无限重复（历史样例见上文已知阻塞）。死锁实例直接 kill 重来没有意义——先修复或报告，再验证。
+若 inspector 的 HTTP discovery 通、但任何 CDP 命令（含 `targets`）长时间无响应：**主进程大概率被同步调用堵死**。确认方法：`sample $ELECTRON_PID 3 -file /tmp/s.txt`，看主线程栈：停在 `SecItemAdd`/`mach_msg` 系 Keychain 授权等待（见下方根因记录，检查启动命令是否带了 `--use-mock-keychain`）；停在同一 JS 帧无限重复才是应用代码死循环。堵死实例直接 kill 重来没有意义——先确认根因，再验证。
 
 判读：
 
