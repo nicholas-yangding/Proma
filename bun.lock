@@ -37,7 +37,7 @@
     },
     "apps/electron": {
       "name": "@proma/electron",
-      "version": "0.19.57",
+      "version": "0.19.69",
       "dependencies": {
         "@codemirror/language": "^6.12.4",
         "@codemirror/state": "^6.7.1",
@@ -62,6 +62,7 @@
         "pdfjs-dist": "^4.10.38",
         "sharp": "^0.35.3",
         "typebox": "1.1.38",
+        "yaml": "2.9.0",
       },
       "devDependencies": {
         "@electron/rebuild": "^4.2.0",

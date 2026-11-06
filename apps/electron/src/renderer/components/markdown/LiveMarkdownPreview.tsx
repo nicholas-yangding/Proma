@@ -21,14 +21,17 @@ import {
   type LiveMarkdownTable,
 } from './live-markdown-table'
 import { LiveMarkdownTableEditor } from './LiveMarkdownTableEditor'
-import { getLeadingFrontmatter, type LiveMarkdownPropertyEntry } from './live-markdown-frontmatter'
+import {
+  getLeadingFrontmatter,
+  getLeadingFrontmatterRange,
+  planPropertyEdit,
+  type LiveMarkdownPropertyEntry,
+} from './live-markdown-frontmatter'
 
 type PreviewKind = 'code' | 'table' | 'frontmatter' | 'mermaid' | 'thematic-break' | 'math' | 'raw-html'
 
 export type ResolveLiveMarkdownImageSrc = (src: string) => Promise<string | null>
 export type SaveLiveMarkdownPastedImage = (file: File) => Promise<string | null>
-export type { LiveMarkdownPropertyEntry } from './live-markdown-frontmatter'
-export type ChangeLiveMarkdownProperties = (entries: LiveMarkdownPropertyEntry[], documentValue?: string) => void
 
 export interface LiveMarkdownFindOptions {
   caseSensitive: boolean
@@ -209,6 +212,8 @@ const liveMarkdownShikiHighlight: Extension = [
 interface PreviewState {
   activeLines: Set<number>
   blocks: PreviewBlock[]
+  frontmatterEnd: number
+  showPropertiesSource: boolean
   decorations: DecorationSet
 }
 
@@ -314,7 +319,7 @@ class TableWidget extends LiveMarkdownBlockWidget {
         onCommit={(nextTable, focusCell) => {
           if (view.state.readOnly) return
           const nextSource = serializeLiveMarkdownTable(nextTable)
-          const currentBlock = buildBlocks(view.state).find((block) => block.kind === 'table' && block.from === this.from)
+          const currentBlock = buildBlocks(view.state).blocks.find((block) => block.kind === 'table' && block.from === this.from)
           if (!currentBlock) return
           view.dispatch({ changes: { from: currentBlock.from, to: currentBlock.to, insert: nextSource } })
           if (focusCell) requestAnimationFrame(() => {
@@ -327,7 +332,7 @@ class TableWidget extends LiveMarkdownBlockWidget {
         }}
         onDelete={() => {
           if (view.state.readOnly) return
-          const currentBlock = buildBlocks(view.state).find((block) => block.kind === 'table' && block.from === this.from)
+          const currentBlock = buildBlocks(view.state).blocks.find((block) => block.kind === 'table' && block.from === this.from)
           if (!currentBlock) return
           view.dispatch({ changes: { from: currentBlock.from, to: currentBlock.to, insert: '' } })
         }}
@@ -344,22 +349,57 @@ class TableWidget extends LiveMarkdownBlockWidget {
   }
 }
 
+const showPropertiesSourceEffect = StateEffect.define<boolean>()
+
+function propertiesSourceButton(view: EditorView, showSource: boolean): HTMLButtonElement {
+  const button = document.createElement('button')
+  button.type = 'button'
+  button.className = 'vault-properties-source-toggle'
+  button.textContent = showSource ? (view.state.readOnly ? '查看 YAML' : '编辑 YAML') : '显示属性'
+  button.onclick = () => {
+    view.dispatch({ effects: showPropertiesSourceEffect.of(showSource), selection: { anchor: 0 } })
+    view.focus()
+  }
+  return button
+}
+
+function propertyLink(text: string, onOpenWikiLink?: (target: string) => void): HTMLElement | null {
+  if (/^https?:\/\/[^\s]+$/i.test(text) && URL.canParse(text)) {
+    const link = document.createElement('a')
+    link.href = text
+    link.target = '_blank'
+    link.rel = 'noreferrer noopener'
+    link.textContent = text
+    link.className = 'vault-property-link'
+    return link
+  }
+  const wiki = text.match(/^\[\[([^\[\]\n|]+)(?:\|([^\[\]\n]+))?\]\]$/)
+  if (!wiki?.[1]?.trim()) return null
+  const target = wiki[1].trim()
+  const label = wiki[2]?.trim() || target
+  if (!onOpenWikiLink) return null
+  const link = document.createElement('button')
+  link.type = 'button'
+  link.className = 'vault-property-link'
+  link.textContent = label
+  link.title = target
+  link.onclick = () => onOpenWikiLink(target)
+  return link
+}
+
 class FrontmatterWidget extends LiveMarkdownBlockWidget {
   constructor(
     private readonly entries: LiveMarkdownPropertyEntry[],
-    private readonly from: number,
-    private readonly onChange?: ChangeLiveMarkdownProperties,
+    private readonly onOpenWikiLink?: (target: string) => void,
   ) { super() }
 
   override eq(other: FrontmatterWidget): boolean {
-    return this.from === other.from && JSON.stringify(this.entries) === JSON.stringify(other.entries)
+    return JSON.stringify(this.entries) === JSON.stringify(other.entries)
   }
 
   override toDOM(view: EditorView): HTMLElement {
     const wrapper = document.createElement('section')
     wrapper.className = 'vault-properties'
-    wrapper.dataset.liveMarkdownBlockFrom = String(this.from)
-    wrapper.dataset.liveMarkdownBlockKind = 'frontmatter'
     wrapper.setAttribute('aria-label', 'Properties')
 
     const heading = document.createElement('div')
@@ -369,104 +409,116 @@ class FrontmatterWidget extends LiveMarkdownBlockWidget {
     const count = document.createElement('span')
     count.className = 'vault-properties-count'
     count.textContent = `${this.entries.length} 个字段`
-    heading.append(title, count)
+    heading.append(title, count, propertiesSourceButton(view, true))
     wrapper.appendChild(heading)
 
     const list = document.createElement('div')
     list.className = 'vault-properties-list'
-    this.entries.forEach((entry, index) => {
-      const dateValue = /^\d{4}-\d{2}-\d{2}(?:[T ][\d:.+-]+)?$/.test(entry.value)
+    for (const entry of this.entries) {
       const row = document.createElement('div')
       row.className = 'vault-property-row'
+      const property = entry.value
+      const date = property.kind === 'scalar' && property.date
 
       const icon = document.createElement('span')
-      icon.className = `vault-property-icon ${dateValue ? 'vault-property-icon-date' : 'vault-property-icon-text'}`
+      icon.className = `vault-property-icon ${date ? 'vault-property-icon-date' : 'vault-property-icon-text'}`
       icon.setAttribute('aria-hidden', 'true')
 
-      const key = document.createElement(this.onChange ? 'input' : 'span')
-      key.className = `vault-property-key${this.onChange ? ' vault-property-input' : ''}`
-      if (key instanceof HTMLInputElement) {
+      const link = property.kind === 'scalar' ? propertyLink(property.text, this.onOpenWikiLink) : null
+      if (!view.state.readOnly && property.kind === 'scalar' && property.editableSource !== null && !link) {
+        const key = document.createElement('input')
+        key.className = 'vault-property-key vault-property-input'
         key.value = entry.key
-        key.setAttribute('aria-label', `Property ${entry.key} 名称`)
         key.spellcheck = false
-      } else {
-        key.textContent = entry.key
-      }
+        key.setAttribute('aria-label', `Property ${entry.key} 名称`)
 
-      const value = document.createElement(this.onChange ? 'input' : 'span')
-      value.className = `vault-property-value${this.onChange ? ' vault-property-input' : ''}${dateValue ? ' vault-property-value-date' : ''}`
-      if (value instanceof HTMLInputElement) {
-        value.value = entry.value
-        value.setAttribute('aria-label', `${entry.key} 属性值`)
+        const value = document.createElement('input')
+        value.className = 'vault-property-value vault-property-input'
+        value.value = property.text
         value.spellcheck = false
-      } else {
-        value.textContent = entry.value || '未设置'
-      }
+        if (property.empty) value.placeholder = '未设置'
+        value.setAttribute('aria-label', `${entry.key} 属性值`)
 
-      if (this.onChange && key instanceof HTMLInputElement && value instanceof HTMLInputElement) {
-        let pendingKey: string | null = null
-        let skipKeyBlurCommit = false
-        const commit = (): void => {
-          const nextKey = (pendingKey ?? key.value).trim()
-          if (!nextKey) return
-          this.onChange?.(this.entries.map((current, currentIndex) => currentIndex === index
-            ? { key: nextKey, value: value.value }
-            : current), view.state.doc.toString())
+        const apply = (edit: { key: string; text: string } | 'remove'): boolean => {
+          const changes = planPropertyEdit(view.state.doc.toJSON(), entry, edit)
+          if (changes.length === 0) return false
+          view.dispatch({ changes, userEvent: 'input' })
+          return true
         }
-        key.addEventListener('blur', () => {
-          if (skipKeyBlurCommit) {
-            skipKeyBlurCommit = false
-            return
+        const commit = (): void => {
+          if (!apply({ key: key.value.trim(), text: value.value })) {
+            key.value = entry.key
+            value.value = property.text
           }
+        }
+        let editingValue = false
+        key.onblur = () => { if (!editingValue) commit() }
+        value.onblur = () => {
+          editingValue = false
           commit()
-        })
-        value.addEventListener('blur', commit)
-        key.addEventListener('keydown', (event) => {
+        }
+        key.onkeydown = (event) => {
           if (event.key === 'Tab' && !event.shiftKey) {
-            // Do not rebuild the widget between key and value editing. The
-            // pending key is persisted together with the value on its blur.
             event.preventDefault()
-            pendingKey = key.value
-            skipKeyBlurCommit = true
+            editingValue = true
             value.focus()
           } else if (event.key === 'Enter') {
             event.preventDefault()
             key.blur()
           }
-        })
-        value.addEventListener('keydown', (event) => {
-          if (event.key === 'Enter') { event.preventDefault(); value.blur() }
-        })
+        }
+        value.onkeydown = (event) => {
+          if (event.key === 'Enter') {
+            event.preventDefault()
+            value.blur()
+          }
+        }
 
         const remove = document.createElement('button')
         remove.type = 'button'
         remove.className = 'vault-property-remove'
         remove.textContent = '×'
         remove.setAttribute('aria-label', `删除属性 ${entry.key}`)
-        // Preserve field focus for pointer users. Native button click still
-        // handles mouse, Enter, and Space accessibly.
-        remove.addEventListener('mousedown', (event) => {
-          event.preventDefault()
-          event.stopPropagation()
-        })
-        remove.addEventListener('click', (event) => {
-          event.preventDefault()
-          event.stopPropagation()
-          this.onChange?.(this.entries.filter((_, currentIndex) => currentIndex !== index), view.state.doc.toString())
-        })
+        remove.onmousedown = (event) => event.preventDefault()
+        remove.onclick = () => { apply('remove') }
         row.append(icon, key, value, remove)
       } else {
+        const key = document.createElement('span')
+        key.className = 'vault-property-key'
+        key.textContent = entry.key
+        const value = document.createElement('div')
+        value.className = 'vault-property-value'
+        if (link) {
+          value.appendChild(link)
+        } else if (property.kind === 'list' && property.items.length > 0) {
+          value.classList.add('vault-property-value-list')
+          for (const item of property.items) {
+            const chip = document.createElement('span')
+            chip.className = 'vault-property-value-chip'
+            const itemLink = propertyLink(item, this.onOpenWikiLink)
+            if (itemLink) chip.appendChild(itemLink)
+            else chip.textContent = item || '未设置'
+            value.appendChild(chip)
+          }
+        } else {
+          value.textContent = property.kind === 'source' ? '在 YAML 中查看'
+            : property.kind === 'scalar' && !property.empty ? property.text : '未设置'
+        }
         row.append(icon, key, value)
       }
 
       list.appendChild(row)
-    })
+    }
     wrapper.appendChild(list)
     this.observeSize(wrapper, view)
     return wrapper
   }
 
   override ignoreEvent(): boolean { return true }
+}
+
+class PropertiesSourceWidget extends WidgetType {
+  override toDOM(view: EditorView): HTMLElement { return propertiesSourceButton(view, false) }
 }
 
 class HorizontalRuleWidget extends LiveMarkdownBlockWidget {
@@ -581,7 +633,10 @@ class InlineImageWidget extends WidgetType {
     image.addEventListener('error', () => view.requestMeasure())
     element.appendChild(image)
 
-    if (/^(?:https?:|data:|blob:|proma-file:)/i.test(this.src)) {
+    if (/^https?:/i.test(this.src)) {
+      image.referrerPolicy = 'no-referrer'
+      image.src = this.src
+    } else if (/^(?:data:|blob:|proma-file:)/i.test(this.src)) {
       image.src = this.src
     } else if (this.resolveImageSrc) {
       void this.resolveImageSrc(this.src).then((resolved) => {
@@ -613,21 +668,26 @@ class AngleAutolinkWidget extends WidgetType {
 
 function buildBlocks(
   state: EditorState,
-  onChangeProperties?: ChangeLiveMarkdownProperties,
   enableProperties = false,
+  showPropertiesSource = false,
+  onOpenWikiLink?: (target: string) => void,
   findController?: LiveMarkdownFindController,
-): PreviewBlock[] {
+): { blocks: PreviewBlock[]; frontmatterEnd: number } {
   const blocks: PreviewBlock[] = []
-  const lines = Array.from({ length: state.doc.lines }, (_, index) => state.doc.line(index + 1).text)
-  const frontmatter = enableProperties ? getLeadingFrontmatter(lines) : null
-  if (frontmatter) {
-    const from = state.doc.line(1).from
-    const to = state.doc.line(frontmatter.endLine).to
-    blocks.push({ kind: 'frontmatter', from, to, decoration: Decoration.replace({ widget: new FrontmatterWidget(frontmatter.entries, from, onChangeProperties), block: true }) })
+  const lines = state.doc.toJSON()
+  const candidate = enableProperties ? getLeadingFrontmatterRange(lines) : null
+  const entries = candidate && !showPropertiesSource ? getLeadingFrontmatter(lines, candidate) : null
+  // 解析失败时让普通 Markdown 规则处理分隔线；已打开的 YAML 源码模式保留编辑区域。
+  const range = entries || showPropertiesSource ? candidate : null
+  const frontmatterEnd = range ? state.doc.line(range.endLine).to : 0
+  if (showPropertiesSource) {
+    const decoration = Decoration.widget({ widget: new PropertiesSourceWidget(), side: -1, block: true })
+    blocks.push({ kind: 'frontmatter', from: 0, to: 0, decoration })
+  } else if (entries) {
+    const decoration = Decoration.replace({ widget: new FrontmatterWidget(entries, onOpenWikiLink), block: true })
+    blocks.push({ kind: 'frontmatter', from: 0, to: frontmatterEnd, decoration })
   }
-  // Only hide the source when an editable flat mapping was recognized. Complex
-  // frontmatter remains in the normal editor, preserving the original YAML.
-  for (let number = frontmatter ? frontmatter.endLine + 1 : 1; number <= lines.length; number += 1) {
+  for (let number = range ? range.endLine + 1 : 1; number <= lines.length; number += 1) {
     const line = lines[number - 1] ?? ''
     const fence = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/)
     if (fence) {
@@ -685,12 +745,13 @@ function buildBlocks(
       number = end
     }
   }
-  return blocks
+  return { blocks, frontmatterEnd }
 }
 
 function buildDecorations(
   state: EditorState,
   blocks: PreviewBlock[],
+  frontmatterEnd: number,
   lines: Set<number>,
   resolveImageSrc?: ResolveLiveMarkdownImageSrc,
 ): DecorationSet {
@@ -705,6 +766,7 @@ function buildDecorations(
   for (let number = 1; number <= state.doc.lines; number += 1) {
     if (lines.has(number)) continue
     const line = state.doc.line(number)
+    if (line.from < frontmatterEnd) continue
     for (const preview of findInlineLiveMarkdownPreviews(line.text)) {
       const from = line.from + preview.from
       const to = line.from + preview.to
@@ -727,30 +789,39 @@ function buildDecorations(
 export function createLiveMarkdownBlockPreview(
   resolveImageSrc?: ResolveLiveMarkdownImageSrc,
   savePastedImage?: SaveLiveMarkdownPastedImage,
-  onChangeProperties?: ChangeLiveMarkdownProperties,
   enableProperties = false,
   findController?: LiveMarkdownFindController,
+  onOpenWikiLink?: (target: string) => void,
 ): Extension {
   return [
   liveMarkdownShikiHighlight,
   StateField.define<PreviewState>({
     create: (state) => {
       const lines = activeLines(state)
-      const blocks = buildBlocks(state, onChangeProperties, enableProperties, findController)
+      const { blocks, frontmatterEnd } = buildBlocks(state, enableProperties, false, onOpenWikiLink, findController)
       return {
         activeLines: lines,
         blocks,
-        decorations: buildDecorations(state, blocks, lines, resolveImageSrc),
+        frontmatterEnd,
+        showPropertiesSource: false,
+        decorations: buildDecorations(state, blocks, frontmatterEnd, lines, resolveImageSrc),
       }
     },
     update: (value, transaction) => {
       const lines = activeLines(transaction.state)
-      const blocks = transaction.docChanged ? buildBlocks(transaction.state, onChangeProperties, enableProperties, findController) : value.blocks
-      if (!transaction.docChanged && sameLines(lines, value.activeLines)) return value
+      const sourceEffect = transaction.effects.find((effect) => effect.is(showPropertiesSourceEffect))
+      const showPropertiesSource = sourceEffect?.value ?? value.showPropertiesSource
+      const rebuild = transaction.docChanged || showPropertiesSource !== value.showPropertiesSource
+      if (!rebuild && sameLines(lines, value.activeLines)) return value
+      const { blocks, frontmatterEnd } = rebuild
+        ? buildBlocks(transaction.state, enableProperties, showPropertiesSource, onOpenWikiLink, findController)
+        : value
       return {
         activeLines: lines,
         blocks,
-        decorations: buildDecorations(transaction.state, blocks, lines, resolveImageSrc),
+        frontmatterEnd,
+        showPropertiesSource,
+        decorations: buildDecorations(transaction.state, blocks, frontmatterEnd, lines, resolveImageSrc),
       }
     },
     provide: (field) => EditorView.decorations.from(field, (value) => value.decorations),

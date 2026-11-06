@@ -2799,6 +2799,19 @@ body {
   letter-spacing: 0.02em;
   white-space: nowrap;
 }
+.vault-ink-mde .vault-properties-source-toggle,
+.vault-ink-mde .vault-property-link {
+  color: hsl(var(--primary));
+  font-weight: 500;
+  text-align: start;
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
+.vault-ink-mde .vault-properties-source-toggle {
+  flex-shrink: 0;
+  padding: 0.2rem 0.35rem;
+  font-size: 0.75rem;
+}
 .vault-ink-mde .vault-properties-list {
   display: flex;
   flex-direction: column;

@@ -1,6 +1,6 @@
 {
   "name": "@proma/electron",
-  "version": "0.19.68",
+  "version": "0.19.69",
   "description": "Proma，为专业用户设计的 Agent",
   "main": "dist/main.cjs",
   "author": {
@@ -70,7 +70,8 @@
     "node-pty": "^1.1.0",
     "pdfjs-dist": "^4.10.38",
     "sharp": "^0.35.3",
-    "typebox": "1.1.38"
+    "typebox": "1.1.38",
+    "yaml": "2.9.0"
   },
   "devDependencies": {
     "@electron/rebuild": "^4.2.0",

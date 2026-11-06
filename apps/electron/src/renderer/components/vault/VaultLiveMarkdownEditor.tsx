@@ -1,6 +1,5 @@
 import * as React from 'react'
-import { LiveMarkdownEditor, type LiveMarkdownEditorHandle, type LiveMarkdownTextSelection, type LiveMarkdownPropertyEntry } from '@/components/markdown/LiveMarkdownEditor'
-import { serializeFlatLeadingFrontmatter } from '@/components/markdown/live-markdown-frontmatter'
+import { LiveMarkdownEditor, type LiveMarkdownEditorHandle, type LiveMarkdownTextSelection } from '@/components/markdown/LiveMarkdownEditor'
 
 import { createVaultWikiLinks } from './vault-wikilinks'
 
@@ -32,11 +31,8 @@ export const VaultLiveMarkdownEditor = React.forwardRef<LiveMarkdownEditorHandle
   function VaultLiveMarkdownEditor({ relativePath, onOpenWikiLink, ...props }, ref): React.ReactElement {
     const onOpenRef = React.useRef(onOpenWikiLink)
     onOpenRef.current = onOpenWikiLink
-    const extensions = React.useMemo(() => [createVaultWikiLinks((target) => onOpenRef.current(target))], [])
-    const valueRef = React.useRef(props.value)
-    const onChangeRef = React.useRef(props.onChange)
-    valueRef.current = props.value
-    onChangeRef.current = props.onChange
+    const openWikiLink = React.useCallback((target: string) => onOpenRef.current(target), [])
+    const extensions = React.useMemo(() => [createVaultWikiLinks(openWikiLink)], [openWikiLink])
     const mediaRequestsRef = React.useRef(new Map<string, Promise<string | null>>())
     const resolveImageSrc = React.useCallback((src: string): Promise<string | null> => {
       const cached = mediaRequestsRef.current.get(src)
@@ -56,14 +52,16 @@ export const VaultLiveMarkdownEditor = React.forwardRef<LiveMarkdownEditorHandle
       }))?.src ?? null
     }, [relativePath])
 
-    const handlePropertiesChange = React.useCallback((entries: LiveMarkdownPropertyEntry[], documentValue?: string): void => {
-      // This callback is retained by the one-time CodeMirror extension. Prefer
-      // its live document snapshot, then the latest controlled value, so a
-      // property change cannot reintroduce body text from a previous render.
-      const nextValue = serializeFlatLeadingFrontmatter(documentValue ?? valueRef.current, entries)
-      onChangeRef.current(nextValue)
-    }, [])
-
-    return <LiveMarkdownEditor ref={ref} {...props} extensions={extensions} enableProperties onChangeProperties={handlePropertiesChange} resolveImageSrc={resolveImageSrc} savePastedImage={savePastedImage} />
+    return (
+      <LiveMarkdownEditor
+        ref={ref}
+        {...props}
+        extensions={extensions}
+        enableProperties
+        onOpenPropertyWikiLink={openWikiLink}
+        resolveImageSrc={resolveImageSrc}
+        savePastedImage={savePastedImage}
+      />
+    )
   },
 )

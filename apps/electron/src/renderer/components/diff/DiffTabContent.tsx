@@ -1990,6 +1990,7 @@ export function DiffTabContent({ filePath, dirPath, sessionId, gitRoot, previewO
                 onTextSelectionChange={handleLiveMarkdownSelectionChange}
                 readOnly={Boolean(readOnly)}
                 resolveImageSrc={resolveProjectMarkdownImageSrc}
+                enableProperties
                 className={cn(
                   'live-markdown-external-scroll',
                   shouldMaskMarkdownForScrollRestore && 'invisible',
