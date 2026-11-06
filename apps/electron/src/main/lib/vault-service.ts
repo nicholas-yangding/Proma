@@ -14,7 +14,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { homedir, platform } from 'node:os'
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { basename, dirname, join, relative, resolve } from 'node:path'
 import type {
   VaultCandidate,
   VaultConfig,
@@ -31,12 +31,12 @@ import type {
 import { getDefaultVaultDir, getVaultConfigPath, resolveDefaultVaultDir } from './config-paths'
 import { readJsonFileSafe, writeJsonFileAtomic, writeTextFileAtomic } from './safe-file'
 import { isValidImageBytes } from './image-content-validation'
+import { VAULT_MAX_EDIT_BYTES } from '@proma/shared'
+import { assertVaultRoot, getSafeVaultFolderTarget, getSafeVaultPath, getSafeVaultTarget, isWithinRoot, normalizeRelativeMarkdownPath, HIDDEN_DIRECTORY_PREFIX } from './vault-path-policy'
 
-const MAX_VAULT_FILE_BYTES = 2 * 1024 * 1024
 const MAX_VAULT_FILES = 5_000
 const MAX_VAULT_FOLDERS = 1_000
 const MAX_VAULT_DEPTH = 16
-const HIDDEN_DIRECTORY_PREFIX = '.'
 const MAX_VAULT_PASTED_IMAGE_BYTES = 10 * 1024 * 1024
 // Reject oversize renderer IPC before decoding into an additional Node Buffer.
 const MAX_VAULT_PASTED_IMAGE_BASE64_CHARS = Math.ceil(MAX_VAULT_PASTED_IMAGE_BYTES / 3) * 4
@@ -49,85 +49,6 @@ const PASTED_IMAGE_EXTENSIONS: Record<string, string> = {
 
 function sha256(content: string): string {
   return createHash('sha256').update(content, 'utf-8').digest('hex')
-}
-
-function isWindowsAbsolutePath(value: string): boolean {
-  return /^[A-Za-z]:[\\/]/.test(value) || value.startsWith('\\\\')
-}
-
-function normalizeRelativeMarkdownPath(value: string): string {
-  if (typeof value !== 'string' || value.trim().length === 0 || value.includes('\0')) {
-    throw new Error('Vault 相对路径不能为空')
-  }
-  if (isAbsolute(value) || isWindowsAbsolutePath(value)) {
-    throw new Error('Vault 不接受绝对路径')
-  }
-
-  const normalized = value.replace(/\\/g, '/').replace(/^\.\//, '')
-  const parts = normalized.split('/')
-  if (parts.some((part) => !part || part === '.' || part === '..' || part.startsWith(HIDDEN_DIRECTORY_PREFIX))) {
-    throw new Error('Vault 路径不能包含隐藏目录、空段或上级目录')
-  }
-  if (!normalized.toLowerCase().endsWith('.md')) {
-    throw new Error('Vault 仅支持 Markdown (.md) 文件')
-  }
-  return parts.join('/')
-}
-
-function isWithinRoot(rootPath: string, targetPath: string): boolean {
-  const fromRoot = relative(rootPath, targetPath)
-  return fromRoot === '' || (!fromRoot.startsWith(`..${sep}`) && fromRoot !== '..' && !isAbsolute(fromRoot))
-}
-
-function normalizeRelativeVaultFolderPath(value: string): string {
-  if (typeof value !== 'string' || value.includes('\0')) {
-    throw new Error('Vault 文件夹路径非法')
-  }
-  const normalized = value.trim().replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/$/, '')
-  if (!normalized) return ''
-  if (isAbsolute(normalized) || isWindowsAbsolutePath(normalized)) {
-    throw new Error('Vault 不接受绝对路径')
-  }
-  const parts = normalized.split('/')
-  if (parts.some((part) => !part || part === '.' || part === '..' || part.startsWith(HIDDEN_DIRECTORY_PREFIX))) {
-    throw new Error('Vault 文件夹路径不能包含隐藏目录、空段或上级目录')
-  }
-  return parts.join('/')
-}
-
-function assertVaultRoot(rootPath: string): string {
-  const resolved = realpathSync(resolve(rootPath))
-  if (!statSync(resolved).isDirectory()) {
-    throw new Error('Vault 根路径不是目录')
-  }
-  return resolved
-}
-
-function getSafeVaultPath(rootPath: string, relativePath: string): { absolutePath: string; relativePath: string } {
-  const absolutePath = resolve(rootPath, relativePath)
-  if (!isWithinRoot(rootPath, absolutePath)) {
-    throw new Error('Vault 路径超出授权根目录')
-  }
-
-  let current = rootPath
-  for (const segment of relativePath.split('/').filter(Boolean)) {
-    current = join(current, segment)
-    if (!existsSync(current)) continue
-    const stats = lstatSync(current)
-    if (stats.isSymbolicLink()) {
-      throw new Error('Vault 不允许通过软链接访问文件')
-    }
-  }
-
-  return { absolutePath, relativePath }
-}
-
-function getSafeVaultTarget(rootPath: string, relativePath: string): { absolutePath: string; relativePath: string } {
-  return getSafeVaultPath(rootPath, normalizeRelativeMarkdownPath(relativePath))
-}
-
-function getSafeVaultFolderTarget(rootPath: string, relativePath: string): { absolutePath: string; relativePath: string } {
-  return getSafeVaultPath(rootPath, normalizeRelativeVaultFolderPath(relativePath))
 }
 
 function toRelativePath(rootPath: string, absolutePath: string): string {
@@ -311,7 +232,7 @@ export function createVaultFileSystem(rootPath: string): VaultFileSystem {
     if (!existsSync(target.absolutePath)) throw new Error(`Vault 文件不存在: ${target.relativePath}`)
     const stats = lstatSync(target.absolutePath)
     if (!stats.isFile()) throw new Error('Vault 目标不是普通文件')
-    if (stats.size > MAX_VAULT_FILE_BYTES) throw new Error('Vault 文件超过 2 MB 读取上限')
+    if (stats.size > VAULT_MAX_EDIT_BYTES) throw new Error('Vault 文件超过 2 MB 读取上限')
     const content = readFileSync(target.absolutePath, 'utf-8')
     return {
       relativePath: target.relativePath,
@@ -373,7 +294,7 @@ export function createVaultFileSystem(rootPath: string): VaultFileSystem {
   }
 
   const writeFile = (input: VaultWriteInput): VaultWriteResult => {
-    if (Buffer.byteLength(input.content, 'utf-8') > MAX_VAULT_FILE_BYTES) {
+    if (Buffer.byteLength(input.content, 'utf-8') > VAULT_MAX_EDIT_BYTES) {
       throw new Error('Vault 写入内容超过 2 MB 限制')
     }
     const target = getSafeVaultTarget(root, input.relativePath)
@@ -397,7 +318,7 @@ export function createVaultFileSystem(rootPath: string): VaultFileSystem {
   }
 
   const createUntitledNote = (inboxPath: string, content = '', now = new Date()): VaultWriteResult => {
-    if (Buffer.byteLength(content, 'utf-8') > MAX_VAULT_FILE_BYTES) {
+    if (Buffer.byteLength(content, 'utf-8') > VAULT_MAX_EDIT_BYTES) {
       throw new Error('Vault 写入内容超过 2 MB 限制')
     }
     const normalizedInboxPath = normalizeRelativeMarkdownPath(join(inboxPath, 'placeholder.md')).replace(/\/placeholder\.md$/, '')
@@ -416,7 +337,7 @@ export function createVaultFileSystem(rootPath: string): VaultFileSystem {
   }
 
   const createUntitledNoteInFolder = (folderPath: string, content = '', now = new Date()): VaultWriteResult => {
-    if (Buffer.byteLength(content, 'utf-8') > MAX_VAULT_FILE_BYTES) {
+    if (Buffer.byteLength(content, 'utf-8') > VAULT_MAX_EDIT_BYTES) {
       throw new Error('Vault 写入内容超过 2 MB 限制')
     }
     const folder = getSafeVaultFolderTarget(root, folderPath)
@@ -486,7 +407,7 @@ export function createVaultFileSystem(rootPath: string): VaultFileSystem {
     const stats = lstatSync(target.absolutePath)
     if (!stats.isFile()) throw new Error('Vault 目标不是普通文件')
     if (input.expectedSha256) {
-      if (stats.size > MAX_VAULT_FILE_BYTES) throw new Error('Vault 文件超过 2 MB 校验上限')
+      if (stats.size > VAULT_MAX_EDIT_BYTES) throw new Error('Vault 文件超过 2 MB 校验上限')
       const current = readFile(target.relativePath)
       if (input.expectedSha256 !== current.sha256) {
         throw new Error('文件已在外部修改，请刷新后再删除')
@@ -534,7 +455,7 @@ export function getVaultConfig(): VaultConfig | null {
   return parseVaultConfig(readJsonFileSafe<unknown>(getVaultConfigPath()))
 }
 
-function vaultId(rootPath: string): string {
+export function getVaultId(rootPath: string): string {
   // Renderer state needs to distinguish Vaults, but must not receive the
   // user-authorized absolute path. The digest is stable for the canonical root.
   return createHash('sha256').update(rootPath, 'utf-8').digest('hex')
@@ -544,7 +465,7 @@ export function getVaultSummary(): VaultSummary | null {
   const config = getVaultConfig()
   if (!config) return null
   return {
-    vaultId: vaultId(config.rootPath),
+    vaultId: getVaultId(config.rootPath),
     displayName: config.displayName,
     inboxPath: config.inboxPath,
     allowAgentWrites: config.allowAgentWrites,
@@ -554,7 +475,7 @@ export function getVaultSummary(): VaultSummary | null {
 
 function vaultSummary(config: VaultConfig): VaultSummary {
   return {
-    vaultId: vaultId(config.rootPath),
+    vaultId: getVaultId(config.rootPath),
     displayName: config.displayName,
     inboxPath: config.inboxPath,
     allowAgentWrites: config.allowAgentWrites,
@@ -596,9 +517,12 @@ export function authorizeDiscoveredVault(rootPath: string, options: { inboxPath?
 }
 
 
-export function getConfiguredVaultFileSystem(): VaultFileSystem {
+export function getConfiguredVaultFileSystem(expectedVaultId?: string): VaultFileSystem {
   const config = getVaultConfig()
   if (!config) throw new Error('尚未选择 Vault')
+  if (expectedVaultId !== undefined && getVaultId(config.rootPath) !== expectedVaultId) {
+    throw new Error('Vault 已切换，请重新搜索')
+  }
   return createVaultFileSystem(config.rootPath)
 }
 

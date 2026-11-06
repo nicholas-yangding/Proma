@@ -115,9 +115,9 @@ export const DEFAULT_SHORTCUTS: ShortcutDefinition[] = [
   {
     id: 'global-search',
     name: '全局搜索',
-    description: '搜索对话和会话',
-    defaultMac: 'Cmd+Shift+F',
-    defaultWin: 'Ctrl+Shift+F',
+    description: '搜索会话和当前 Obsidian Vault',
+    defaultMac: 'Cmd+K',
+    defaultWin: 'Ctrl+K',
     category: 'navigation',
   },
   {
@@ -162,8 +162,8 @@ export const DEFAULT_SHORTCUTS: ShortcutDefinition[] = [
     id: 'clear-context',
     name: '清除上下文',
     description: '清除当前对话的上下文',
-    defaultMac: 'Cmd+K',
-    defaultWin: 'Ctrl+K',
+    defaultMac: 'Cmd+Shift+K',
+    defaultWin: 'Ctrl+Shift+K',
     category: 'edit',
   },
   {
@@ -192,8 +192,8 @@ export const DEFAULT_SHORTCUTS: ShortcutDefinition[] = [
   },
   {
     id: 'toggle-right-panel',
-    name: '切换文件面板',
-    description: '显示或隐藏右侧文件面板',
+    name: '切换工作区',
+    description: '显示或隐藏文件工作区',
     defaultMac: 'Cmd+Shift+B',
     defaultWin: 'Ctrl+Shift+B',
     category: 'app',

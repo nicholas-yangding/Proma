@@ -162,7 +162,7 @@ export function findBestSearchMatchInNormalized(
   const needle = normalizedQuery.chars
   const haystack = normalizedHaystack.chars
   if (
-    needle.length < 2
+    needle.length === 0
     || needle.length > MAX_NORMALIZED_SEARCH_QUERY_LENGTH
     || haystack.length === 0
   ) return null

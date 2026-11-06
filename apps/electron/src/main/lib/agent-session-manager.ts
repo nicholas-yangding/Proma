@@ -44,7 +44,8 @@ import type {
   AgentActiveWorktree,
   SessionWorkbenchLayout,
 } from '@proma/shared'
-import { migratePermissionMode, mergeSkillActivations, findBestSearchMatch, insertTopSearchResult } from '@proma/shared'
+import { migratePermissionMode, mergeSkillActivations, findBestSearchMatchInNormalized, insertTopSearchResult, normalizeSearchText, MAX_SEARCH_QUERY_SOURCE_LENGTH, MAX_NORMALIZED_SEARCH_QUERY_LENGTH } from '@proma/shared'
+import type { NormalizedSearchText } from '@proma/shared'
 import { getConversationMessages } from './conversation-manager'
 // 旧格式 → SDKMessage 的转换逻辑下沉到 @proma/session-core 作为唯一真源，避免主进程与渲染层各存一份。
 import { convertLegacyMessage } from '@proma/session-core'
@@ -1321,8 +1322,10 @@ export function cleanupStaleAttachedPaths(): number {
  * 搜索 Agent 会话正文。
  * 每个会话最多返回 2 个用户/助手正文命中，最多返回 100 个命中会话。
  */
-export async function searchAgentSessionMessages(query: string): Promise<AgentMessageSearchResult[]> {
-  if (!query || query.length < 2) return []
+export async function searchAgentSessionMessages(query: string, signal?: AbortSignal): Promise<AgentMessageSearchResult[]> {
+  if (signal?.aborted || query.length > MAX_SEARCH_QUERY_SOURCE_LENGTH) return []
+  const normalizedQuery = normalizeSearchText(query)
+  if (!normalizedQuery.chars.length || normalizedQuery.chars.length > MAX_NORMALIZED_SEARCH_QUERY_LENGTH) return []
 
   const index = readIndex()
   const results: AgentMessageSearchResult[] = []
@@ -1330,12 +1333,13 @@ export async function searchAgentSessionMessages(query: string): Promise<AgentMe
 
   const sortedSessions = [...index.sessions].sort((a, b) => b.updatedAt - a.updatedAt)
   for (const session of sortedSessions) {
+    if (signal?.aborted) return []
     if (matchedSessionCount >= MAX_SEARCH_SESSIONS) break
 
     const filePath = getAgentSessionMessagesPath(session.id)
     if (!existsSync(filePath)) continue
 
-    const hits = await findMatchesInAgentJsonl(filePath, query)
+    const hits = await findMatchesInAgentJsonl(filePath, normalizedQuery, signal)
     if (hits.length === 0) continue
     matchedSessionCount++
 
@@ -1353,7 +1357,7 @@ export async function searchAgentSessionMessages(query: string): Promise<AgentMe
     }
   }
 
-  return results
+  return signal?.aborted ? [] : results
 }
 
 interface AgentSearchHit {
@@ -1368,15 +1372,17 @@ interface AgentSearchHit {
 /** 在单个 Agent JSONL 中收集用户文本和助手 text block 的命中。 */
 async function findMatchesInAgentJsonl(
   filePath: string,
-  query: string,
+  query: NormalizedSearchText,
+  signal?: AbortSignal,
 ): Promise<AgentSearchHit[]> {
   const stream = createReadStream(filePath, { encoding: 'utf-8' })
-  const rl = createInterface({ input: stream, crlfDelay: Infinity })
+  const rl = createInterface({ input: stream, crlfDelay: Infinity, signal })
   const hitsByMessageId = new Map<string, AgentSearchHit>()
   const anonymousHits: AgentSearchHit[] = []
 
   try {
     for await (const line of rl) {
+      if (signal?.aborted) break
       if (!line.trim()) continue
       let parsed: {
         role?: string
@@ -1416,7 +1422,7 @@ async function findMatchesInAgentJsonl(
       }
 
       if (!role || !textContent) continue
-      const match = findBestSearchMatch(textContent, query)
+      const match = findBestSearchMatchInNormalized(normalizeSearchText(textContent), query)
       if (!match) continue
 
       const snippetStart = Math.max(0, match.matchStart - 40)

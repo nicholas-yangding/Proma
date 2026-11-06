@@ -326,7 +326,7 @@ export function ChatInput({ conversationId, streaming, pendingAttachments, onSet
     }
   }, [addFilesAsAttachments])
 
-  // 监听快捷键系统分发的 clear-context 事件（Cmd+K）
+  // 监听快捷键系统分发的 clear-context 事件（Cmd+Shift+K）
   React.useEffect(() => {
     const handler = (): void => {
       onClearContext?.()

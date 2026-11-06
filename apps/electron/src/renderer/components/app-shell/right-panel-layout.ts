@@ -1,5 +1,13 @@
+import type { AgentWorkspacePosition } from '@/atoms/agent-atoms'
+
 export const RIGHT_PANEL_MAX_VIEWPORT_RATIO = 3 / 5
 export const MIN_MAIN_AREA_WIDTH = 320
+
+export function getWorkspaceDragWidth({
+  startWidth, deltaX, position,
+}: { startWidth: number; deltaX: number; position: AgentWorkspacePosition }): number {
+  return position === 'center' ? startWidth + deltaX : startWidth - deltaX
+}
 
 export function getRightPanelMaxWidth(
   viewportWidth: number,

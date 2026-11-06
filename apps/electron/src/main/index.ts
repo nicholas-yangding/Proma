@@ -88,6 +88,7 @@ import { markRunningDelegationsAsInterrupted } from './lib/agent-session-manager
 import { stopAllGenerations } from './lib/chat-service'
 import { configureUpdater, initAutoUpdater, cleanupUpdater } from './lib/updater/auto-updater'
 import { startWorkspaceWatcher, stopWorkspaceWatcher } from './lib/workspace-watcher'
+import { warmVaultSearch, stopVaultSearch } from './lib/vault-search-service'
 import { startChatToolsWatcher, stopChatToolsWatcher } from './lib/chat-tools-watcher'
 import { getIsQuitting, setQuitting } from './lib/app-lifecycle'
 import { getMainWindow as getStoredMainWindow, setMainWindow as setStoredMainWindow } from './lib/main-window-store'
@@ -643,7 +644,6 @@ function createWindow(): void {
     return { action: 'deny' }
   })
 
-  if (isDev) mainWindow.webContents.openDevTools()
   void loadMainRenderer().catch((error) => {
     console.error('[启动] 主 Renderer 初始加载失败:', error)
     showRendererFailure(error instanceof Error ? error.message : String(error))
@@ -743,6 +743,7 @@ async function bootstrap(): Promise<void> {
 
   // Register IPC handlers
   registerIpcHandlers()
+  warmVaultSearch()
 
   // 收敛上次退出时遗留的运行中委派子会话（内存态丢失，无法续跑）
   safeRun('markRunningDelegationsAsInterrupted', markRunningDelegationsAsInterrupted)
@@ -951,6 +952,7 @@ app.on('before-quit', () => {
   cleanupUpdater()
   // 停止工作区文件监听
   stopWorkspaceWatcher()
+  stopVaultSearch()
   // 停止 Chat 工具配置文件监听
   stopChatToolsWatcher()
   // 停止所有 Bridge

@@ -6,8 +6,8 @@
 
 import * as React from 'react'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
-import { Check, ChevronDown, PanelRight, Pencil, Split, X } from 'lucide-react'
-import { agentSessionsAtom, agentSideTemporaryAgentMapAtom, agentDiffPanelTabAtom, currentSessionSidePanelOpenAtom, getExplorationSidePanelTab } from '@/atoms/agent-atoms'
+import { Check, ChevronDown, Columns2, PanelLeft, PanelRight, Pencil, Split, X } from 'lucide-react'
+import { agentSessionsAtom, agentSideTemporaryAgentMapAtom, agentDiffPanelTabAtom, agentWorkspacePositionAtom, currentSessionSidePanelOpenAtom, getExplorationSidePanelTab } from '@/atoms/agent-atoms'
 import { tabsAtom, updateTabTitle } from '@/atoms/tab-atoms'
 import { replaceAgentSessionInFreshnessOrder } from '@/lib/agent-session-list'
 import { cn } from '@/lib/utils'
@@ -15,6 +15,8 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 
@@ -31,6 +33,8 @@ export function AgentHeader({ sessionId }: AgentHeaderProps): React.ReactElement
   const setSideTemporaryAgentMap = useSetAtom(agentSideTemporaryAgentMapAtom)
   const setSidePanelTabMap = useSetAtom(agentDiffPanelTabAtom)
   const [isRightPanelOpen, setRightPanelOpen] = useAtom(currentSessionSidePanelOpenAtom)
+  const [workspacePosition, setWorkspacePosition] = useAtom(agentWorkspacePositionAtom)
+  const WorkspacePanelIcon = workspacePosition === 'center' ? PanelLeft : PanelRight
   const [editing, setEditing] = React.useState(false)
   const [editTitle, setEditTitle] = React.useState('')
   const inputRef = React.useRef<HTMLInputElement>(null)
@@ -177,16 +181,43 @@ export function AgentHeader({ sessionId }: AgentHeaderProps): React.ReactElement
           </DropdownMenuContent>
         </DropdownMenu>
       )}
-      {!isRightPanelOpen && (
-        <button
-          type="button"
-          onClick={() => setRightPanelOpen(true)}
-          className="titlebar-no-drag ml-auto inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-[background-color,color,transform] hover:bg-muted hover:text-foreground active:scale-[0.96]"
-          aria-label="展开右侧工作区"
-        >
-          <PanelRight className="size-4" />
-        </button>
-      )}
+      <div className="ml-auto flex shrink-0 items-center gap-1 titlebar-no-drag">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              className="inline-flex size-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              aria-label="工作区布局"
+              title="工作区布局"
+            >
+              <Columns2 className="size-4" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="z-[100] titlebar-no-drag">
+            <DropdownMenuRadioGroup
+              value={workspacePosition}
+              onValueChange={(value) => {
+                if (value !== 'center' && value !== 'right') return
+                setWorkspacePosition(value)
+                setRightPanelOpen(true)
+              }}
+            >
+              <DropdownMenuRadioItem value="right">Agent 居中，文件在右</DropdownMenuRadioItem>
+              <DropdownMenuRadioItem value="center">文件居中，Agent 在右</DropdownMenuRadioItem>
+            </DropdownMenuRadioGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        {!isRightPanelOpen && (
+          <button
+            type="button"
+            onClick={() => setRightPanelOpen(true)}
+            className="inline-flex size-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            aria-label="展开工作区"
+          >
+            <WorkspacePanelIcon className="size-4" />
+          </button>
+        )}
+      </div>
     </div>
   )
 }

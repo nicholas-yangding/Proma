@@ -424,6 +424,7 @@ export const CHAT_IPC_CHANNELS = {
   /** 切换对话归档状态 */
   TOGGLE_ARCHIVE: 'chat:toggle-archive',
   /** 搜索所有对话消息内容 */
+  /** 空关键词取消当前窗口的全局消息扫描。 */
   SEARCH_MESSAGES: 'chat:search-messages',
   /** 搜索当前对话的完整消息历史（仅返回命中元数据） */
   SEARCH_SESSION_MESSAGES: 'chat:search-session-messages',

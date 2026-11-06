@@ -125,6 +125,8 @@ import type {
   VaultReadResult,
   VaultRenameInput,
   VaultSavePastedImageInput,
+  VaultSearchResponse,
+  VaultSearchStatus,
   VaultSummary,
   VaultWriteInput,
   VaultWriteResult,
@@ -496,7 +498,9 @@ export interface ElectronAPI {
   selectVault: (options?: { inboxPath?: string; allowAgentWrites?: boolean }) => Promise<VaultSummary | null>
   authorizeDiscoveredVault: (rootPath: string, options?: { inboxPath?: string; allowAgentWrites?: boolean }) => Promise<VaultSummary>
   listVaultFiles: () => Promise<VaultTreeEntry[]>
-  readVaultFile: (relativePath: string) => Promise<VaultReadResult>
+  readVaultFile: (relativePath: string, expectedVaultId?: string) => Promise<VaultReadResult>
+  searchVaultNotes: (query: string) => Promise<VaultSearchResponse>
+  onVaultSearchChanged: (callback: (status: VaultSearchStatus) => void) => () => void
   resolveVaultMedia: (noteRelativePath: string, src: string) => Promise<import('@proma/shared').ResolvedFileUrl | null>
   saveVaultPastedImage: (input: VaultSavePastedImageInput) => Promise<{ src: string } | null>
   writeVaultFile: (input: VaultWriteInput) => Promise<VaultWriteResult>
@@ -1783,7 +1787,13 @@ const electronAPI: ElectronAPI = {
   selectVault: (options?: { inboxPath?: string; allowAgentWrites?: boolean }) => ipcRenderer.invoke(VAULT_IPC_CHANNELS.SELECT, options),
   authorizeDiscoveredVault: (rootPath: string, options?: { inboxPath?: string; allowAgentWrites?: boolean }) => ipcRenderer.invoke(VAULT_IPC_CHANNELS.AUTHORIZE_CANDIDATE, rootPath, options),
   listVaultFiles: () => ipcRenderer.invoke(VAULT_IPC_CHANNELS.LIST_FILES),
-  readVaultFile: (relativePath: string) => ipcRenderer.invoke(VAULT_IPC_CHANNELS.READ_FILE, relativePath),
+  readVaultFile: (relativePath: string, expectedVaultId?: string) => ipcRenderer.invoke(VAULT_IPC_CHANNELS.READ_FILE, relativePath, expectedVaultId),
+  searchVaultNotes: (query: string) => ipcRenderer.invoke(VAULT_IPC_CHANNELS.SEARCH, query),
+  onVaultSearchChanged: (callback: (status: VaultSearchStatus) => void) => {
+    const listener = (_: unknown, status: VaultSearchStatus): void => callback(status)
+    ipcRenderer.on(VAULT_IPC_CHANNELS.SEARCH_CHANGED, listener)
+    return () => { ipcRenderer.removeListener(VAULT_IPC_CHANNELS.SEARCH_CHANGED, listener) }
+  },
   resolveVaultMedia: (noteRelativePath: string, src: string) => ipcRenderer.invoke(VAULT_IPC_CHANNELS.RESOLVE_MEDIA, noteRelativePath, src),
   saveVaultPastedImage: (input: VaultSavePastedImageInput) => ipcRenderer.invoke(VAULT_IPC_CHANNELS.SAVE_PASTED_IMAGE, input),
   writeVaultFile: (input: VaultWriteInput) => ipcRenderer.invoke(VAULT_IPC_CHANNELS.WRITE_FILE, input),

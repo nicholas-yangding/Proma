@@ -1835,6 +1835,7 @@ export const AGENT_IPC_CHANNELS = {
   /** 切换会话归档状态 */
   TOGGLE_ARCHIVE: 'agent:toggle-archive',
   /** 搜索会话消息内容 */
+  /** 空关键词取消当前窗口的全局消息扫描。 */
   SEARCH_MESSAGES: 'agent:search-messages',
   /** 搜索当前工作区可引用的 Agent 会话 */
   SEARCH_SESSION_REFERENCES: 'agent:search-session-references',

@@ -1,7 +1,7 @@
 /**
  * AppShell - 应用主布局容器
  *
- * 布局结构：[LeftSidebar 可折叠] | [MainArea: TabBar + TabContent] | [RightSidePanel 可折叠]
+ * 左侧是会话栏，Agent 主区和工作区可以互换位置。
  *
  * MainArea 支持多标签页，Settings 视图为独立覆盖。
  */
@@ -12,10 +12,10 @@ import { LeftSidebar } from './LeftSidebar'
 import { RightSidePanel } from './RightSidePanel'
 import { MainArea } from '@/components/tabs/MainArea'
 import { appModeAtom } from '@/atoms/app-mode'
-import { agentDiffPanelTabAtom, agentSessionComponentOpenMapAtom, agentSessionsAtom, agentSidePanelLayoutAtomFamily, agentSidePanelLayoutMapAtom, agentSidePanelSplitMapAtom, currentAgentSessionIdAtom, currentSessionSidePanelOpenAtom, isWorkspaceComponentTab, pruneAgentSidePanelLayouts, fileBrowserExpandedPathsAtom, fileBrowserScrollTopMapAtom, pruneFileBrowserStateMap } from '@/atoms/agent-atoms'
+import { agentDiffPanelTabAtom, agentSessionComponentOpenMapAtom, agentSessionsAtom, agentSidePanelLayoutAtomFamily, agentSidePanelLayoutMapAtom, agentSidePanelSplitMapAtom, agentWorkspacePositionAtom, currentAgentSessionIdAtom, currentSessionSidePanelOpenAtom, isWorkspaceComponentTab, pruneAgentSidePanelLayouts, fileBrowserExpandedPathsAtom, fileBrowserScrollTopMapAtom, pruneFileBrowserStateMap } from '@/atoms/agent-atoms'
 import { leftSidebarWidthAtom } from '@/atoms/sidebar-atoms'
 import { sidebarCollapsedAtom } from '@/atoms/tab-atoms'
-import { clampRightPanelWidth, getRightPanelMaxWidth } from './right-panel-layout'
+import { clampRightPanelWidth, getRightPanelMaxWidth, getWorkspaceDragWidth } from './right-panel-layout'
 import { automationFormAtom } from '@/atoms/automation-atoms'
 import { activeViewAtom } from '@/atoms/active-view'
 import { productivityToolsAtom } from '@/atoms/ui-preferences'
@@ -37,6 +37,7 @@ const MIN_TODO_PANEL_WIDTH = 600
 // 两个 Pane 需要各自保留约 320px 内容区及中间分隔条。
 const MIN_SPLIT_PANEL_WIDTH = 720
 const EXPANDED_WORKSPACE_DEFAULT_VIEWPORT_RATIO = 2 / 5
+const CENTER_WORKSPACE_DEFAULT_RATIO = 3 / 5
 const COLLAPSED_LEFT_SIDEBAR_WIDTH = 60
 
 function isExpandedWorkspaceTab(tab: string | undefined): boolean {
@@ -80,6 +81,7 @@ export function AppShell(): React.ReactElement {
   const setAgentSessionComponentOpenMap = useSetAtom(agentSessionComponentOpenMapAtom)
   const activeRightPanelSplit = useAtomValue(agentSidePanelSplitMapAtom).get(currentSessionId ?? '') ?? null
   const isPanelOpen = useAtomValue(currentSessionSidePanelOpenAtom)
+  const workspacePosition = useAtomValue(agentWorkspacePositionAtom)
   const automationForm = useAtomValue(automationFormAtom)
   const settingsOpen = useAtomValue(settingsOpenAtom)
   const setSettingsOpen = useSetAtom(settingsOpenAtom)
@@ -123,6 +125,7 @@ export function AppShell(): React.ReactElement {
     })
   }, [activeView, productivityTools.calendarEnabled, productivityTools.obsidianEnabled, productivityTools.todosEnabled, setActiveView, setAgentDiffPanelTabs, setAgentSessionComponentOpenMap])
   const showRightPanel = appMode === 'agent' && !!currentSessionId && !(automationForm.open && activeView !== 'conversations') && activeView !== 'planning' && activeView !== 'agent-skills'
+  const workspaceCentered = workspacePosition === 'center' && showRightPanel && isPanelOpen && activeView === 'conversations'
   const isWindows = React.useMemo(() => detectIsWindows(), [])
 
   // 左侧边栏可拖拽宽度
@@ -234,12 +237,20 @@ export function AppShell(): React.ReactElement {
   // 打开任一扩展工作区后，当前会话保持该宽度，避免在右侧 Tab 间切换时反复缩放。
   // 并排仅临时借用宽布局；退出后自动回到 Session 先前的普通/宽工作区宽度。
   const usesWidePanelLayout = rightPanelLayout.hasOpenedWideWorkspace || activeRightPanelSplit !== null
-  const persistedRightPanelWidth = usesWidePanelLayout ? effectiveWidePanelWidth : clampedRightPanelWidth
+  const persistedRightPanelWidth = workspaceCentered
+    ? clampRightPanelWidth(
+      rightPanelLayout.centerWidth ?? Math.floor((viewportWidth - leftSidebarOccupiedWidth) * CENTER_WORKSPACE_DEFAULT_RATIO),
+      viewportWidth,
+      rightPanelMinimumWidth,
+      leftSidebarOccupiedWidth,
+      true,
+    )
+    : usesWidePanelLayout ? effectiveWidePanelWidth : clampedRightPanelWidth
   const displayedRightPanelWidth = draggedRightPanelWidth ?? persistedRightPanelWidth
 
-  React.useEffect(() => {
+  React.useLayoutEffect(() => {
     return () => rightPanelDragCleanup.current?.()
-  }, [currentSessionId])
+  }, [currentSessionId, isPanelOpen, workspaceCentered])
 
   React.useEffect(() => {
     setRightPanelLayouts((previous) => pruneAgentSidePanelLayouts(previous, agentSessions, currentSessionId ?? undefined))
@@ -267,10 +278,10 @@ export function AppShell(): React.ReactElement {
   }, [])
 
   React.useEffect(() => {
-    if (currentSessionId && clampedRightPanelWidth !== rightPanelLayout.width) {
+    if (!workspaceCentered && currentSessionId && clampedRightPanelWidth !== rightPanelLayout.width) {
       setRightPanelLayout((previous) => ({ ...previous, width: clampedRightPanelWidth }))
     }
-  }, [clampedRightPanelWidth, currentSessionId, rightPanelLayout.width, setRightPanelLayout])
+  }, [clampedRightPanelWidth, currentSessionId, rightPanelLayout.width, setRightPanelLayout, workspaceCentered])
 
   const handleMouseDown = React.useCallback((e: React.MouseEvent) => {
     if (!currentSessionId) return
@@ -290,7 +301,16 @@ export function AppShell(): React.ReactElement {
     let cancelDrag: () => void
 
     const applyWidth = () => {
-      const requestedWidth = startWidth + startX - latestClientX
+      const requestedWidth = getWorkspaceDragWidth({
+        startWidth,
+        deltaX: latestClientX - startX,
+        position: workspaceCentered ? 'center' : 'right',
+      })
+      if (workspaceCentered) {
+        latestWidth = clampRightPanelWidth(requestedWidth, viewportWidth, rightPanelMinimumWidth, leftSidebarOccupiedWidth, true)
+        setDraggedRightPanelWidth(latestWidth)
+        return
+      }
       const normalMaximumWidth = getRightPanelMaxWidth(viewportWidth, leftSidebarOccupiedWidth)
       const shouldCollapseSidebar = canAutoCollapseSidebarForRightPanel && requestedWidth > normalMaximumWidth
       const nextSidebarCollapsed = sidebarCollapsedDuringDrag || shouldCollapseSidebar
@@ -327,9 +347,12 @@ export function AppShell(): React.ReactElement {
 
       // 会话切换后取消旧拖拽，不能把旧闭包的尺寸写入先前的 Session。
       if (persist && currentSessionIdRef.current === dragSessionId) {
-        setRightPanelLayout((previous) => isWideWorkspace
-          ? { ...previous, widePanelWidthOverride: latestWidth }
-          : { ...previous, width: latestWidth })
+        setRightPanelLayout((previous) => {
+          if (workspaceCentered) return { ...previous, centerWidth: latestWidth }
+          return isWideWorkspace
+            ? { ...previous, widePanelWidthOverride: latestWidth }
+            : { ...previous, width: latestWidth }
+        })
       }
     }
 
@@ -353,7 +376,7 @@ export function AppShell(): React.ReactElement {
     rightPanelDragCleanup.current = cancelDrag
     document.addEventListener('mousemove', onMouseMove)
     document.addEventListener('mouseup', onMouseUp)
-  }, [activeRightPanelSplit, canAutoCollapseSidebarForRightPanel, clampedLeftSidebarWidth, currentSessionId, displayedRightPanelWidth, isExpandedRightWorkspace, leftSidebarOccupiedWidth, rightPanelLayout.hasOpenedWideWorkspace, rightPanelMinimumWidth, setRightPanelLayout, setSidebarCollapsed, sidebarCollapsed, usesWidePanelLayout, viewportWidth])
+  }, [activeRightPanelSplit, canAutoCollapseSidebarForRightPanel, clampedLeftSidebarWidth, currentSessionId, displayedRightPanelWidth, isExpandedRightWorkspace, leftSidebarOccupiedWidth, rightPanelLayout.hasOpenedWideWorkspace, rightPanelMinimumWidth, setRightPanelLayout, setSidebarCollapsed, sidebarCollapsed, usesWidePanelLayout, viewportWidth, workspaceCentered])
 
   return (
     <>
@@ -365,7 +388,7 @@ export function AppShell(): React.ReactElement {
           className={cn('flex h-full w-full', getWindowTitlebarContentInsetClass(isWindows), settingsOpen && 'hidden')}
         >
             {/* 左侧边栏：可折叠，可拖拽调整宽度 */}
-            <div className="relative z-[60] crt-sidebar">
+            <div id="app-session-sidebar" className="relative z-[60] crt-sidebar">
               <LeftSidebar width={clampedLeftSidebarWidth} noTransition={isDraggingLeftSidebar} />
               {/* 侧边栏展开时显示拖拽手柄，折叠态隐藏 */}
               {!sidebarCollapsed && (
@@ -379,26 +402,30 @@ export function AppShell(): React.ReactElement {
             </div>
             <div aria-hidden="true" className="relative z-[61] w-px flex-shrink-0 bg-border/80 dark:bg-border/70" />
 
-            {/* 中间容器：relative z-[60] 使其在 z-50 拖动区域之上 */}
-            <div className="flex-1 min-w-0 relative z-[60]">
+            {/* 仅交换视觉顺序，保留会话输入和已打开的工作区内容。 */}
+            <div className={cn('flex-1 min-w-0 relative z-[60]', workspaceCentered && 'order-2')}>
               {/* 主内容区域（TabBar + TabContent） */}
               <MainArea />
               {/* 全局 Toast 固定在 Agent 历史主区右上角，不进入右侧原生浏览器面板。 */}
               <Toaster position="top-right" offset={{ top: 58, right: 12 }} className="agent-history-toaster" />
             </div>
 
-            {/* 右侧边栏：Agent 文件面板 */}
+            {/* Agent 工作区：分隔线始终贴在 Agent 主区一侧。 */}
             {showRightPanel && (
               <div
-                className="relative z-[60] flex flex-shrink-0 items-stretch crt-sidebar"
+                className={cn('relative z-[60] flex flex-shrink-0 items-stretch crt-sidebar', workspaceCentered && 'order-1')}
               >
-                <div aria-hidden="true" className="pointer-events-none absolute left-0 top-0 bottom-0 z-10 w-px bg-border/80 dark:bg-border/70" />
+                <div aria-hidden="true" className={cn('pointer-events-none absolute inset-y-0 z-10 w-px bg-border/80 dark:bg-border/70', workspaceCentered ? 'right-0' : 'left-0')} />
                 {/* 拖拽手柄 */}
                 {isPanelOpen && (
                   <div
                     className={cn(
-                      'absolute left-0 top-0 bottom-0 w-[8px] -translate-x-1/2 cursor-col-resize active:bg-primary/50 transition-colors z-20'
+                      'absolute inset-y-0 z-20 w-2 cursor-col-resize active:bg-primary/50 transition-colors',
+                      workspaceCentered ? 'right-0 translate-x-1/2' : 'left-0 -translate-x-1/2',
                     )}
+                    role="separator"
+                    aria-orientation="vertical"
+                    aria-label="调整工作区宽度"
                     onMouseDown={handleMouseDown}
                   />
                 )}

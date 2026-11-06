@@ -91,6 +91,33 @@ export type VaultWriteResult =
   | { ok: true; relativePath: string; sha256: string; modifiedAt: number }
   | { ok: false; reason: 'conflict'; currentSha256: string; currentModifiedAt: number }
 
+export const VAULT_SEARCH_MAX_QUERY_LENGTH = 256
+export const VAULT_MAX_EDIT_BYTES = 2 * 1024 * 1024
+
+export interface VaultSearchHit {
+  relativePath: string
+  title: string
+  snippet: string
+  matchStart: number
+  matchLength: number
+  editable: boolean
+}
+
+export interface VaultSearchStatus {
+  vaultId: string | null
+  displayName: string | null
+  phase: 'unconfigured' | 'indexing' | 'ready' | 'error'
+  revision: number
+  indexedFiles: number
+  skippedFiles: number
+}
+
+export interface VaultSearchResponse {
+  status: VaultSearchStatus
+  hits: VaultSearchHit[]
+  totalMatches: number
+}
+
 export const VAULT_IPC_CHANNELS = {
   GET_CONFIG: 'vault:get-config',
   SELECT_DEFAULT: 'vault:select-default',
@@ -98,6 +125,8 @@ export const VAULT_IPC_CHANNELS = {
   SELECT: 'vault:select',
   AUTHORIZE_CANDIDATE: 'vault:authorize-candidate',
   LIST_FILES: 'vault:list-files',
+  SEARCH: 'vault:search',
+  SEARCH_CHANGED: 'vault:search-changed',
   READ_FILE: 'vault:read-file',
   RESOLVE_MEDIA: 'vault:resolve-media',
   SAVE_PASTED_IMAGE: 'vault:save-pasted-image',

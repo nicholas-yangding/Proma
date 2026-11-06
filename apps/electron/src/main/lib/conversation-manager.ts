@@ -22,7 +22,6 @@ import {
   createSearchSnippet,
   MAX_NORMALIZED_SEARCH_QUERY_LENGTH,
   MAX_SEARCH_QUERY_SOURCE_LENGTH,
-  findBestSearchMatch,
   findBestSearchMatchInNormalized,
   insertTopSearchResult,
   normalizeSearchText,
@@ -576,8 +575,10 @@ function findMatchesInConversationSearchIndex(
   return results
 }
 
-export async function searchConversationMessages(query: string): Promise<MessageSearchResult[]> {
-  if (!query || query.length < 2) return []
+export async function searchConversationMessages(query: string, signal?: AbortSignal): Promise<MessageSearchResult[]> {
+  if (signal?.aborted || query.length > MAX_SEARCH_QUERY_SOURCE_LENGTH) return []
+  const normalizedQuery = normalizeSearchText(query)
+  if (!normalizedQuery.chars.length || normalizedQuery.chars.length > MAX_NORMALIZED_SEARCH_QUERY_LENGTH) return []
 
   const index = readIndex()
   const results: MessageSearchResult[] = []
@@ -585,12 +586,13 @@ export async function searchConversationMessages(query: string): Promise<Message
 
   const sortedConversations = [...index.conversations].sort((a, b) => b.updatedAt - a.updatedAt)
   for (const conv of sortedConversations) {
+    if (signal?.aborted) return []
     if (matchedSessionCount >= MAX_SEARCH_SESSIONS) break
 
     const filePath = getConversationMessagesPath(conv.id)
     if (!existsSync(filePath)) continue
 
-    const hits = await findMatchesInJsonl(filePath, query, MAX_SEARCH_HITS_PER_SESSION)
+    const hits = await findMatchesInJsonl(filePath, normalizedQuery, MAX_SEARCH_HITS_PER_SESSION, signal)
     if (hits.length === 0) continue
     matchedSessionCount++
 
@@ -608,7 +610,7 @@ export async function searchConversationMessages(query: string): Promise<Message
     }
   }
 
-  return results
+  return signal?.aborted ? [] : results
 }
 
 interface ConversationSearchHit {
@@ -670,15 +672,17 @@ async function buildConversationSearchIndex(
  */
 async function findMatchesInJsonl(
   filePath: string,
-  query: string,
+  query: NormalizedSearchText,
   maxResults: number,
+  signal?: AbortSignal,
 ): Promise<ConversationSearchHit[]> {
   const stream = createReadStream(filePath, { encoding: 'utf-8' })
-  const rl = createInterface({ input: stream, crlfDelay: Infinity })
+  const rl = createInterface({ input: stream, crlfDelay: Infinity, signal })
   const hits: ConversationSearchHit[] = []
 
   try {
     for await (const line of rl) {
+      if (signal?.aborted) break
       if (!line.trim()) continue
       let msg: ChatMessage
       try {
@@ -688,7 +692,7 @@ async function findMatchesInJsonl(
       }
       if ((msg.role !== 'user' && msg.role !== 'assistant') || !msg.content) continue
 
-      const match = findBestSearchMatch(msg.content, query)
+      const match = findBestSearchMatchInNormalized(normalizeSearchText(msg.content), query)
       if (!match) continue
 
       const snippet = createSearchSnippet(msg.content, match.matchStart, match.matchLength)

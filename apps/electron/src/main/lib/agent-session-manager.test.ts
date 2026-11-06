@@ -317,6 +317,18 @@ describe('Agent 会话正文搜索', () => {
     expect(results.every((result) => result.role === 'user' || result.role === 'assistant')).toBe(true)
   })
 
+  test('Given 正文包含单字 When 发起查询或取消扫描 Then 返回精确命中且取消后不返回旧结果', async () => {
+    writeAgentSessionsIndex([{ id: 'live-search', title: '示例', workspaceId: 'workspace-a', createdAt: 1, updatedAt: 1 }])
+    writeAgentSessionJsonl('live-search', [JSON.stringify({ role: 'user', id: 'one', content: '命中正文' })])
+    const [hit] = await manager.searchAgentSessionMessages('命')
+    expect(hit?.snippet.slice(hit.matchStart, hit.matchStart + hit.matchLength)).toBe('命')
+    expect(await manager.searchAgentSessionMessages('缺')).toEqual([])
+    const controller = new AbortController()
+    const pending = manager.searchAgentSessionMessages('命', controller.signal)
+    controller.abort()
+    await expect(pending).resolves.toEqual([])
+  })
+
   test('Given 单会话中有多个不同质量的命中 When 搜索 Then 只保留两条最佳结果并让 user 同分优先', async () => {
     writeAgentSessionsIndex([{
       id: 'ranked-search-session',

@@ -1,12 +1,12 @@
 /**
- * DiffPanelTabBar — 右侧工作区的统一顶栏。
+ * DiffPanelTabBar — 工作区的统一顶栏。
  *
  * 文件、改动、预览、问答和每个浏览器网页位于同一层级；网页不再拥有嵌套 Tab 栏。
  */
 
 import * as React from 'react'
 import { useAtomValue, useSetAtom } from 'jotai'
-import { Blocks, Brain, CalendarDays, Clock, Columns2, FolderOpen, Globe, ListTodo, MessageCircle, PanelRight, Plus, Repeat2, ServerCog, SquareTerminal, X } from 'lucide-react'
+import { Blocks, Brain, CalendarDays, Clock, Columns2, FolderOpen, Globe, ListTodo, MessageCircle, PanelLeft, PanelRight, Plus, Repeat2, ServerCog, SquareTerminal, X } from 'lucide-react'
 import { OBSIDIAN_NAME, ObsidianIcon } from '@/components/obsidian/obsidian-brand'
 import { cn } from '@/lib/utils'
 import { getScrollLeftToRevealTab } from '@/lib/tab-visibility'
@@ -24,7 +24,7 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from '@/components/ui/context-menu'
-import { agentDiffUnseenChangesAtom, currentAgentSessionIdAtom } from '@/atoms/agent-atoms'
+import { agentDiffUnseenChangesAtom, agentWorkspacePositionAtom, currentAgentSessionIdAtom } from '@/atoms/agent-atoms'
 import type { AgentSidePanelTab, SessionIndicatorStatus, WorkspaceComponentTab } from '@/atoms/agent-atoms'
 import { groupRightWorkspaceTabs, type RightWorkspacePane } from '@/lib/right-workspace-split'
 import { getDelegationStatusIconClass } from '@/lib/agent-session-list'
@@ -95,6 +95,8 @@ export function DiffPanelTabBar({
   const unseenMap = useAtomValue(agentDiffUnseenChangesAtom)
   const setUnseenMap = useSetAtom(agentDiffUnseenChangesAtom)
   const currentSessionId = useAtomValue(currentAgentSessionIdAtom)
+  const workspacePosition = useAtomValue(agentWorkspacePositionAtom)
+  const WorkspacePanelIcon = workspacePosition === 'center' ? PanelLeft : PanelRight
   const unseenChanges = unseenMap.get(currentSessionId ?? '') ?? false
   const [isAddTabMenuOpen, setIsAddTabMenuOpen] = React.useState(false)
   const [isSplitTabGroupHovered, setIsSplitTabGroupHovered] = React.useState(false)
@@ -319,7 +321,7 @@ export function DiffPanelTabBar({
       <div className="pointer-events-none absolute inset-0 titlebar-drag-region" />
       <div className="relative flex h-full min-w-0 flex-1 items-center titlebar-no-drag">
         <div className="relative flex min-w-0 flex-1 self-stretch">
-          <div ref={tabListRef} className="flex h-9 min-w-0 flex-1 items-center gap-1.5 overflow-x-auto overscroll-x-contain px-2 pt-1.5 pb-0.5 scrollbar-none" role="tablist" aria-label="右侧工作区">
+          <div ref={tabListRef} className="flex h-9 min-w-0 flex-1 items-center gap-1.5 overflow-x-auto overscroll-x-contain px-2 pt-1.5 pb-0.5 scrollbar-none" role="tablist" aria-label="工作区">
           {orderedTabs.map((tab) => {
             const selected = activeTab === tab.id
             const isSplitView = visibleTabs?.left !== undefined && visibleTabs.right !== undefined
@@ -457,7 +459,7 @@ export function DiffPanelTabBar({
                 <button
                   type="button"
                   className="mr-1 inline-flex size-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-[background-color,color,transform] hover:bg-muted hover:text-foreground active:scale-[0.96]"
-                  aria-label="添加右侧工作区标签"
+                  aria-label="添加工作区标签"
                 >
                   <Plus className="size-4" />
                 </button>
@@ -548,12 +550,12 @@ export function DiffPanelTabBar({
                 type="button"
                 onClick={onClose}
                 className="mr-2 inline-flex size-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-[background-color,color,transform] hover:bg-muted hover:text-foreground active:scale-[0.96]"
-                aria-label="折叠右侧工作区"
+                aria-label="折叠工作区"
               >
-                <PanelRight className="size-4" />
+                <WorkspacePanelIcon className="size-4" />
               </button>
             </TooltipTrigger>
-            <TooltipContent side="bottom">折叠右侧工作区 ({navigator.platform.includes('Mac') ? '⌘⇧B' : 'Ctrl+Shift+B'})</TooltipContent>
+            <TooltipContent side="bottom">折叠工作区 ({navigator.platform.includes('Mac') ? '⌘⇧B' : 'Ctrl+Shift+B'})</TooltipContent>
           </Tooltip>
         )}
       </div>

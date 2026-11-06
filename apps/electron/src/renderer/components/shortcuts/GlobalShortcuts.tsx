@@ -174,7 +174,7 @@ export function GlobalShortcuts(): null {
     useCallback(() => setSettingsOpen(true), [setSettingsOpen]),
   )
 
-  // Cmd+Shift+F / Ctrl+Shift+F → 全局搜索
+  // Cmd+K / Ctrl+K → 全局搜索
   useShortcut(
     'global-search',
     useCallback(() => setSearchOpen(true), [setSearchOpen]),
@@ -210,7 +210,7 @@ export function GlobalShortcuts(): null {
     ),
   )
 
-  // Cmd+K → 清除上下文（通过 CustomEvent 分发到 ChatInput）
+  // Cmd+Shift+K → 清除上下文（通过 CustomEvent 分发到 ChatInput）
   useShortcut(
     'clear-context',
     useCallback(() => {

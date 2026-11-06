@@ -39,6 +39,7 @@ import {
   focusedVaultFolderAtomFamily,
   getVaultSessionScope,
   selectedVaultFileAtomFamily,
+  vaultOpenRequestAtom,
   vaultReadResultAtomFamily,
   vaultRefreshTokenAtom,
 } from '@/atoms/vault-atoms'
@@ -662,6 +663,7 @@ export function VaultView({ embedded = false, sessionId }: { embedded?: boolean;
   const [focusedFolder, setFocusedFolder] = useAtom(focusedVaultFolderAtomFamily(vaultSessionScope))
   const [readResult, setReadResult] = useAtom(vaultReadResultAtomFamily(vaultSessionScope))
   const [refreshToken, setRefreshToken] = useAtom(vaultRefreshTokenAtom)
+  const [openRequest, setOpenRequest] = useAtom(vaultOpenRequestAtom)
   const [vaultHelpOpen, setVaultHelpOpen] = React.useState(false)
   const [deleteTarget, setDeleteTarget] = React.useState<VaultFileEntry | null>(null)
   const [deleting, setDeleting] = React.useState(false)
@@ -850,7 +852,7 @@ export function VaultView({ embedded = false, sessionId }: { embedded?: boolean;
 
   const openFile = React.useCallback(async (
     relativePath: string,
-    { discardLocalDraft = false, forceReopen = false }: { discardLocalDraft?: boolean; forceReopen?: boolean } = {},
+    { discardLocalDraft = false, forceReopen = false, expectedVaultId }: { discardLocalDraft?: boolean; forceReopen?: boolean; expectedVaultId?: string } = {},
   ): Promise<void> => {
     if (!discardLocalDraft && !await flushCurrentEditor()) return
     const remountEditor = shouldRemountVaultEditor(selectedFileRef.current, relativePath, forceReopen)
@@ -858,7 +860,7 @@ export function VaultView({ embedded = false, sessionId }: { embedded?: boolean;
     selectFile(relativePath)
     setFileLoading(true)
     try {
-      const result = await window.electronAPI.readVaultFile(relativePath)
+      const result = await window.electronAPI.readVaultFile(relativePath, expectedVaultId)
       if (requestId === readRequestRef.current) {
         setReadResult(result)
         // Only the explicit conflict-recovery action recreates the editor.
@@ -877,6 +879,16 @@ export function VaultView({ embedded = false, sessionId }: { embedded?: boolean;
       if (requestId === readRequestRef.current) setFileLoading(false)
     }
   }, [flushCurrentEditor, refresh, selectFile, setReadResult])
+
+  React.useEffect(() => {
+    if (!openRequest || openRequest.scope !== vaultSessionScope || loading) return
+    setOpenRequest((current) => current === openRequest ? null : current)
+    if (openRequest.vaultId !== config?.vaultId) {
+      toast.error('Vault 已切换，请重新搜索')
+      return
+    }
+    void openFile(openRequest.relativePath, { expectedVaultId: openRequest.vaultId })
+  }, [config?.vaultId, loading, openFile, openRequest, setOpenRequest, vaultSessionScope])
 
   const openWikiLink = React.useCallback((target: string): void => {
     if (!readResult) return

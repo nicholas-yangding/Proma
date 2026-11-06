@@ -5,6 +5,7 @@
  */
 
 import { ipcMain, nativeTheme, shell, dialog, BrowserWindow, app, clipboard, nativeImage } from 'electron'
+import type { WebContents } from 'electron'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { existsSync, realpathSync, readFileSync, writeFileSync, mkdirSync, statSync } from 'node:fs'
 import { realpath, stat, writeFile } from 'node:fs/promises'
@@ -177,6 +178,7 @@ import {
   setVaultUserContext,
   clearVaultUserContext,
 } from './lib/vault-service'
+import { searchVaultNotes, warmVaultSearch } from './lib/vault-search-service'
 import { registerUpdaterIpc } from './lib/updater/updater-ipc'
 import {
   listChannels,
@@ -1395,6 +1397,29 @@ async function withOAuthDeviceCodeQr<T extends CodexOAuthDeviceCode | GithubCopi
   }
 }
 
+const globalMessageSearches = new WeakMap<WebContents, AbortController>()
+
+async function runGlobalMessageSearch<T>(
+  sender: WebContents,
+  query: unknown,
+  search: (query: string, signal: AbortSignal) => Promise<T[]>,
+): Promise<T[]> {
+  globalMessageSearches.get(sender)?.abort()
+  globalMessageSearches.delete(sender)
+  // 空查询用于清空或关闭搜索框；只取消扫描，不读取会话。
+  if (typeof query !== 'string' || !query.trim()) return []
+  const controller = new AbortController()
+  const abort = (): void => controller.abort()
+  globalMessageSearches.set(sender, controller)
+  sender.once('destroyed', abort)
+  try {
+    return await search(query, controller.signal)
+  } finally {
+    sender.removeListener('destroyed', abort)
+    if (globalMessageSearches.get(sender) === controller) globalMessageSearches.delete(sender)
+  }
+}
+
 export function registerIpcHandlers(): void {
   // ===== 本地终端（仅主 renderer 可操作，不能指定可执行文件） =====
   const assertMainTerminalRenderer = (senderId: number): void => {
@@ -1995,9 +2020,7 @@ export function registerIpcHandlers(): void {
   // 搜索所有对话消息内容
   ipcMain.handle(
     CHAT_IPC_CHANNELS.SEARCH_MESSAGES,
-    async (_, query: string) => {
-      return searchConversationMessages(query)
-    }
+    (event, query: unknown) => runGlobalMessageSearch(event.sender, query, searchConversationMessages),
   )
 
   // 搜索当前对话的完整持久化历史（只返回命中元数据，避免传输整份 JSONL）
@@ -2808,9 +2831,7 @@ export function registerIpcHandlers(): void {
   // 搜索 Agent 会话消息内容
   ipcMain.handle(
     AGENT_IPC_CHANNELS.SEARCH_MESSAGES,
-    async (_, query: string) => {
-      return searchAgentSessionMessages(query)
-    }
+    (event, query: unknown) => runGlobalMessageSearch(event.sender, query, searchAgentSessionMessages),
   )
 
   // 搜索可引用的 Agent 会话；省略 workspaceId 时跨工作区搜索。
@@ -6120,7 +6141,11 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(VAULT_IPC_CHANNELS.GET_CONFIG, async () => getVaultSummary())
 
-  ipcMain.handle(VAULT_IPC_CHANNELS.SELECT_DEFAULT, async () => selectDefaultVault())
+  ipcMain.handle(VAULT_IPC_CHANNELS.SELECT_DEFAULT, async () => {
+    const selected = selectDefaultVault()
+    warmVaultSearch()
+    return selected
+  })
 
   ipcMain.handle(VAULT_IPC_CHANNELS.LIST_CANDIDATES, async () => discoverVaultCandidates())
 
@@ -6135,24 +6160,30 @@ export function registerIpcHandlers(): void {
       title: '选择 Vault 文件夹',
     })
     if (result.canceled || result.filePaths.length === 0) return null
-    return configureVault(result.filePaths[0]!, { inboxPath, allowAgentWrites })
+    const selected = configureVault(result.filePaths[0]!, { inboxPath, allowAgentWrites })
+    warmVaultSearch()
+    return selected
   })
 
   ipcMain.handle(VAULT_IPC_CHANNELS.AUTHORIZE_CANDIDATE, async (_, rootPath: unknown, options: unknown) => {
     if (typeof rootPath !== 'string') throw new Error('Vault 候选路径非法')
     const input = options && typeof options === 'object' ? options as Record<string, unknown> : {}
-    return authorizeDiscoveredVault(rootPath, {
+    const selected = authorizeDiscoveredVault(rootPath, {
       inboxPath: typeof input.inboxPath === 'string' ? input.inboxPath : undefined,
       allowAgentWrites: input.allowAgentWrites === true,
     })
+    warmVaultSearch()
+    return selected
   })
 
 
   ipcMain.handle(VAULT_IPC_CHANNELS.LIST_FILES, async () => getConfiguredVaultFileSystem().listFiles())
+  ipcMain.handle(VAULT_IPC_CHANNELS.SEARCH, async (_, query: unknown) => searchVaultNotes(query))
 
-  ipcMain.handle(VAULT_IPC_CHANNELS.READ_FILE, async (_, relativePath: unknown) => {
+  ipcMain.handle(VAULT_IPC_CHANNELS.READ_FILE, async (_, relativePath: unknown, expectedVaultId: unknown) => {
     if (typeof relativePath !== 'string') throw new Error('Vault relativePath 必填')
-    return getConfiguredVaultFileSystem().readFile(relativePath)
+    if (expectedVaultId !== undefined && typeof expectedVaultId !== 'string') throw new Error('Vault 标识非法')
+    return getConfiguredVaultFileSystem(expectedVaultId).readFile(relativePath)
   })
 
   ipcMain.handle(VAULT_IPC_CHANNELS.RESOLVE_MEDIA, async (_, noteRelativePath: unknown, src: unknown): Promise<ResolvedFileUrl | null> => {

@@ -7,7 +7,7 @@
 
 import { atom } from 'jotai'
 import type { Getter } from 'jotai'
-import { atomWithStorage, selectAtom } from 'jotai/utils'
+import { atomWithStorage, createJSONStorage, selectAtom } from 'jotai/utils'
 import { atomFamily } from 'jotai-family'
 import type { AgentSessionMeta, AgentEvent, AgentWorkspace, AgentPendingFile, RetryAttempt, PromaPermissionMode, PermissionRequest, AskUserRequest, ExitPlanModeRequest, ThinkingConfig, AgentEffort, SDKMessage, UnstagedChangesResult } from '@proma/shared'
 import { PROMA_DEFAULT_PERMISSION_MODE } from '@proma/shared'
@@ -517,8 +517,25 @@ export const agentSidePanelOpenAtomFamily = atomFamily((sessionId: string) => at
 /** 新 Agent 会话的右侧面板基线宽度；不继承旧版全局或其他会话的宽布局。 */
 const DEFAULT_AGENT_SIDE_PANEL_WIDTH = 460
 
+export type AgentWorkspacePosition = 'right' | 'center'
+
+const workspacePositionStorage = createJSONStorage<unknown>()
+
+/** 窗口布局是全局偏好；每个会话各自记住两个布局的宽度。 */
+export const agentWorkspacePositionAtom = atomWithStorage<AgentWorkspacePosition>(
+  'proma-agent-workspace-position',
+  'right',
+  {
+    ...workspacePositionStorage,
+    getItem: (key, fallback) => workspacePositionStorage.getItem(key, fallback) === 'center' ? 'center' : 'right',
+    subscribe: undefined,
+  },
+  { getOnInit: true },
+)
+
 export interface AgentSidePanelLayout {
   width: number
+  centerWidth?: number
   hasOpenedWideWorkspace: boolean
   widePanelWidthOverride: number | null
 }
