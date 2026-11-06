@@ -53,6 +53,31 @@ describe('Markdown 剪贴板检测', () => {
 })
 
 describe('markdownToHtml rich preview blocks', () => {
+  test('行内双美元公式不残留分隔符，转换回 Markdown 时保留双美元', () => {
+    const markdown = '公式 $$x^2$$ 结束'
+    const html = markdownToHtml(markdown)
+    expect(html).toContain('公式 <span data-type="math-inline"')
+    expect(html).toContain('</span> 结束')
+    expect(html).not.toContain('$')
+    expect(withHtmlDocument(() => htmlToMarkdown(html))).toBe(markdown)
+  })
+
+  test('独占行双美元公式渲染为块，同行后续正文仍显示', () => {
+    expect(markdownToHtml('$$x^2$$')).toContain('<div data-type="math-block" data-latex="x^2">')
+    expect(markdownToHtml('$$\nx^2\n$$')).toContain('<div data-type="math-block" data-latex="x^2">')
+    expect(markdownToHtml('$$x^2$$ 后续文字')).toContain('</span> 后续文字')
+  })
+
+  test('未闭合的块公式不会吞掉后续段落', () => {
+    const html = markdownToHtml('$$x^2\n\n后续正文')
+    expect(html).toContain('$$x^2')
+    expect(html).toContain('<p>后续正文</p>')
+  })
+
+  test('换行的单美元公式仍作为同一个公式解析', () => {
+    expect(markdownToHtml('前文 $x+\ny$ 后文')).toContain('data-latex="x+&#10;y"')
+  })
+
   test('renders leading yaml frontmatter as a collapsible metadata block', () => {
     const html = markdownToHtml([
       '---',

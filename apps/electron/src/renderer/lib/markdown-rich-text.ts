@@ -1,5 +1,6 @@
 import MarkdownIt from 'markdown-it'
 import { normalizeMalformedStrongDelimiters } from './markdown-emphasis'
+import { isMarkdownEscaped, readDollarMath } from './markdown-math-syntax'
 
 const VIDEO_EXT_RE = /\.(mp4|webm|ogg|ogv|mov|m4v)(?:[?#].*)?$/i
 const PREVIEW_BLOCK_RE = /^<div\s+[^>]*data-type=(["'])(?:raw-html-block|math-block)\1/i
@@ -7,7 +8,7 @@ const DETAILS_BLOCK_RE = /<details(\s[^>]*)?>\s*<summary>([\s\S]*?)<\/summary>([
 const STANDALONE_HTML_MEDIA_RE = /^\s*<(?:img|video)\b[^>]*(?:\/?>|>.*?<\/video>)\s*$/i
 const LEADING_FRONTMATTER_RE = /^(?:\ufeff)?---[ \t]*\r?\n([\s\S]*?)\r?\n(?:---|\.\.\.)[ \t]*(?=\r?\n|$)/
 
-export const MARKDOWN_RENDERER_VERSION = 5
+export const MARKDOWN_RENDERER_VERSION = 6
 
 const EMOJI_SHORTCODES: Record<string, string> = {
   '+1': '👍',
@@ -187,56 +188,49 @@ function isPreviewBlockHtml(value: string): boolean {
 }
 
 function addMathSupport(md: MarkdownIt): void {
-  md.inline.ruler.after('escape', 'math_inline', (state: any, silent: boolean) => {
-    const start = state.pos
-    if (state.src.charCodeAt(start) !== 0x24 || state.src.charCodeAt(start + 1) === 0x24) return false
-
-    let end = start + 1
-    while ((end = state.src.indexOf('$', end)) !== -1) {
-      if (state.src.charCodeAt(end - 1) !== 0x5c) break
-      end += 1
-    }
-    if (end === -1 || end === start + 1) return false
-
+  md.inline.ruler.after('escape', 'math_inline', (state, silent) => {
+    const math = readDollarMath(state.src, state.pos, state.posMax)
+    if (!math) return false
     if (!silent) {
       const token = state.push('math_inline', 'math', 0)
-      token.content = state.src.slice(start + 1, end)
+      token.content = math.content
+      token.markup = math.delimiterLength === 2 ? '$$' : '$'
     }
-    state.pos = end + 1
+    state.pos = math.to
     return true
   })
 
-  md.block.ruler.after('blockquote', 'math_block', (state: any, startLine: number, endLine: number, silent: boolean) => {
-    const start = state.bMarks[startLine] + state.tShift[startLine]
+  md.block.ruler.after('blockquote', 'math_block', (state, startLine, endLine, silent) => {
+    const start = state.bMarks[startLine]! + state.tShift[startLine]!
     const max = state.eMarks[startLine]
     const firstLine = state.src.slice(start, max)
-    if (!firstLine.startsWith('$$')) return false
-
-    if (silent) return true
+    if (!firstLine.startsWith('$$') || firstLine.startsWith('$$$')) return false
 
     let nextLine = startLine + 1
-    let content = firstLine.slice(2)
-    const sameLineEnd = content.lastIndexOf('$$')
-    if (sameLineEnd > 0) {
-      content = content.slice(0, sameLineEnd)
+    let content: string
+    const sameLineMath = readDollarMath(firstLine, 0)
+    if (sameLineMath) {
+      if (firstLine.slice(sameLineMath.to).trim()) return false
+      content = sameLineMath.content
     } else {
-      const lines: string[] = []
-      if (content.trim()) lines.push(content)
+      const lines = [firstLine.slice(2)]
       for (; nextLine < endLine; nextLine++) {
-        const lineStart = state.bMarks[nextLine] + state.tShift[nextLine]
+        const lineStart = state.bMarks[nextLine]! + state.tShift[nextLine]!
         const lineMax = state.eMarks[nextLine]
-        const line = state.src.slice(lineStart, lineMax)
-        const end = line.indexOf('$$')
-        if (end >= 0) {
-          lines.push(line.slice(0, end))
-          nextLine += 1
+        const line = state.src.slice(lineStart, lineMax).trimEnd()
+        const closing = line.length - 2
+        if (line.endsWith('$$') && line[closing - 1] !== '$' && !isMarkdownEscaped(line, closing)) {
+          lines.push(line.slice(0, closing))
           break
         }
         lines.push(line)
       }
+      if (nextLine === endLine) return false
+      nextLine += 1
       content = lines.join('\n')
     }
 
+    if (silent) return true
     const token = state.push('math_block', 'math', 0)
     token.block = true
     token.content = content.trim()
@@ -244,9 +238,11 @@ function addMathSupport(md: MarkdownIt): void {
     return true
   }, { alt: ['paragraph', 'reference', 'blockquote', 'list'] })
 
-  md.renderer.rules.math_inline = (tokens, idx) => (
-    `<span data-type="math-inline" data-latex="${escapeAttr(tokens[idx]?.content ?? '')}"></span>`
-  )
+  md.renderer.rules.math_inline = (tokens, idx) => {
+    const token = tokens[idx]
+    const delimiter = token?.markup === '$$' ? ' data-delimiter-length="2"' : ''
+    return `<span data-type="math-inline" data-latex="${escapeAttr(token?.content ?? '')}"${delimiter}></span>`
+  }
   md.renderer.rules.math_block = (tokens, idx) => (
     `<div data-type="math-block" data-latex="${escapeAttr(tokens[idx]?.content ?? '')}"></div>\n`
   )
@@ -639,7 +635,8 @@ export function htmlToMarkdown(
           return el.getAttribute('data-html') || ''
         }
         if (el.getAttribute('data-type') === 'math-inline') {
-          return `$${el.getAttribute('data-latex') || ''}$`
+          const delimiter = el.getAttribute('data-delimiter-length') === '2' ? '$$' : '$'
+          return `${delimiter}${el.getAttribute('data-latex') || ''}${delimiter}`
         }
         const dataType = el.getAttribute('data-type')
         const dataId = el.getAttribute('data-id') || ''

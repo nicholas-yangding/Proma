@@ -32,12 +32,14 @@ import { useCreateSession } from '@/hooks/useCreateSession'
 import { productivityToolsAtom, sessionHoverPreviewEnabledAtom } from '@/atoms/ui-preferences'
 import { getVaultSessionScope, vaultOpenRequestAtom } from '@/atoms/vault-atoms'
 import { useVaultSearch } from '@/hooks/useVaultSearch'
+import { selectSearchResultSnapshot, type SearchResultScope } from '@/lib/search-result-snapshot'
 import {
   SessionMiniMapPopover,
   useSessionMiniMapHover,
 } from '@/components/session-preview/SessionMiniMapPopover'
 import type {
   VaultSearchHit,
+  VaultSearchStatus,
 } from '@proma/shared'
 import { findBestSearchMatch, VAULT_SEARCH_MAX_QUERY_LENGTH } from '@proma/shared'
 
@@ -69,6 +71,16 @@ interface VaultResult extends VaultSearchHit {
 
 type SessionResult = TitleResult | ContentResult
 type SearchResult = SessionResult | VaultResult
+
+interface SearchResultSnapshot extends SearchResultScope {
+  query: string
+  titleResults: TitleResult[]
+  contentResults: ContentResult[]
+  vaultResults: VaultResult[]
+  vaultStatus?: VaultSearchStatus
+  vaultTotalMatches?: number
+  vaultError: boolean
+}
 
 function isContentResult(result: SessionResult): result is ContentResult {
   return 'snippet' in result
@@ -131,6 +143,7 @@ interface SearchResultRowProps {
   index: number
   isSelected: boolean
   committedQuery: string
+  disabled: boolean
   miniMapDisabled?: boolean
   getAgentWorkspaceName: (sessionId: string) => string | undefined
   onSelect: (result: SearchResult) => void
@@ -142,6 +155,7 @@ function SearchResultRow({
   index,
   isSelected,
   committedQuery,
+  disabled,
   miniMapDisabled,
   getAgentWorkspaceName,
   onSelect,
@@ -156,6 +170,7 @@ function SearchResultRow({
       <button
         ref={preview.setAnchorRef}
         data-index={index}
+        disabled={disabled}
         onClick={() => onSelect(result)}
         onMouseEnter={() => {
           onHover(index)
@@ -163,7 +178,7 @@ function SearchResultRow({
         }}
         onMouseLeave={preview.handleMouseLeave}
         className={cn(
-          'w-full px-4 py-2 text-left transition-colors',
+          'w-full px-4 py-2 text-left transition-colors disabled:pointer-events-none',
           isContent ? 'flex flex-col gap-0.5' : 'flex items-center gap-2.5',
           isSelected
             ? 'bg-primary/10'
@@ -249,28 +264,24 @@ export function SearchDialog(): React.ReactElement {
   const [messageResults, setMessageResults] = React.useState<{
     query: string; mode: typeof appMode; rows: ContentResult[]
   } | null>(null)
+  const [lastResults, setLastResults] = React.useState<SearchResultSnapshot | null>(null)
   const inputRef = React.useRef<HTMLInputElement>(null)
   const listRef = React.useRef<HTMLDivElement>(null)
   const trimmedQuery = query.trim()
   const queryTooLong = trimmedQuery.length > VAULT_SEARCH_MAX_QUERY_LENGTH
-  const searchQuery = open && !composing && !queryTooLong ? trimmedQuery : ''
-  const hasSearched = searchQuery.length > 0
+  const hasQuery = open && trimmedQuery.length > 0 && !queryTooLong
+  const searchQuery = hasQuery && !composing ? trimmedQuery : ''
   const vaultSearch = useVaultSearch(open && vaultEnabled, searchQuery, vaultRetry)
-  const vaultStatus = vaultSearch.response?.status
-  const vaultResults = React.useMemo<VaultResult[]>(() => {
-    const response = vaultSearch.response
-    const vaultId = response?.status.vaultId
-    return response && vaultId ? response.hits.map((hit) => ({ ...hit, type: 'vault', vaultId })) : []
-  }, [vaultSearch.response])
 
   const handleClearQuery = (): void => {
     setQuery('')
     setComposing(false)
     setSelectedKey(null)
+    setLastResults(null)
     inputRef.current?.focus()
   }
 
-  const titleResults = React.useMemo<TitleResult[]>(() => {
+  const matchingTitles = React.useMemo<TitleResult[]>(() => {
     if (!searchQuery) return []
     const sessions = appMode === 'chat' ? conversations : agentSessions
     return sessions
@@ -318,11 +329,40 @@ export function SearchDialog(): React.ReactElement {
   }, [searchQuery, appMode])
 
   const currentMessages = messageResults?.query === searchQuery && messageResults.mode === appMode ? messageResults : null
-  const loading = hasSearched && currentMessages === null
-  const contentResults = React.useMemo(() => {
-    const titleIds = new Set(titleResults.map((item) => item.id))
-    return currentMessages?.rows.filter((item) => !titleIds.has(item.id)) ?? []
-  }, [currentMessages, titleResults])
+  const { response: vaultResponse, loading: vaultLoading, error: vaultError } = vaultSearch
+  const currentResults = React.useMemo<SearchResultSnapshot | null>(() => {
+    if (!searchQuery || !currentMessages || vaultLoading) return null
+    const titleIds = new Set(matchingTitles.map((item) => item.id))
+    const vaultId = vaultResponse?.status.vaultId
+    return {
+      query: searchQuery,
+      mode: appMode,
+      vaultEnabled,
+      titleResults: matchingTitles,
+      contentResults: currentMessages.rows.filter((item) => !titleIds.has(item.id)),
+      vaultResults: vaultResponse && vaultId
+        ? vaultResponse.hits.map((hit) => ({ ...hit, type: 'vault', vaultId }))
+        : [],
+      vaultStatus: vaultResponse?.status,
+      vaultTotalMatches: vaultResponse?.totalMatches,
+      vaultError,
+    }
+  }, [appMode, currentMessages, matchingTitles, searchQuery, vaultEnabled, vaultError, vaultLoading, vaultResponse])
+
+  React.useEffect(() => {
+    if (currentResults) {
+      setLastResults(currentResults)
+    } else if (!open || !trimmedQuery) {
+      setLastResults(null)
+    }
+  }, [currentResults, open, trimmedQuery])
+
+  const displayedResults = selectSearchResultSnapshot({
+    hasQuery, mode: appMode, vaultEnabled, current: currentResults, previous: lastResults,
+  })
+  const canOpenResults = currentResults !== null
+  const vaultStatus = displayedResults?.vaultStatus
+  const { titleResults = [], contentResults = [], vaultResults = [] } = displayedResults ?? {}
 
   const handleAgentSearch = React.useCallback(async () => {
     const q = query.trim()
@@ -355,10 +395,11 @@ export function SearchDialog(): React.ReactElement {
     setActiveView('conversations')
   }, [query, channels, currentAgentChannelId, createAgent, setAgentPendingPrompt, setOpen, setActiveView])
 
-  // 文档结果独立返回；刷新时用稳定键保留键盘选中的项目。
   const allResults = React.useMemo<SearchResult[]>(
-    () => [...titleResults, ...vaultResults, ...contentResults],
-    [titleResults, vaultResults, contentResults]
+    () => displayedResults
+      ? [...displayedResults.titleResults, ...displayedResults.vaultResults, ...displayedResults.contentResults]
+      : [],
+    [displayedResults],
   )
   const selectedIndex = Math.max(0, allResults.findIndex((result) => resultKey(result) === selectedKey))
   React.useEffect(() => {
@@ -372,6 +413,7 @@ export function SearchDialog(): React.ReactElement {
   }, [allResults])
 
   const navigateToResult = React.useCallback((result: SearchResult) => {
+    if (!canOpenResults) return
     if (result.type === 'vault') {
       if (!result.editable) {
         toast.info('这篇笔记超过 Vault 编辑器的 2 MB 上限，仍可检索正文')
@@ -396,10 +438,10 @@ export function SearchDialog(): React.ReactElement {
       const title = session?.title ?? result.title
       openSession('agent', result.id, title)
     }
-  }, [appMode, currentAgentSessionId, requestVaultOpen, openWorkspaceComponent, setOpen, setActiveView, openSession, conversations, agentSessions])
+  }, [appMode, canOpenResults, currentAgentSessionId, requestVaultOpen, openWorkspaceComponent, setOpen, setActiveView, openSession, conversations, agentSessions])
 
   const handleKeyDown = React.useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (composing || e.nativeEvent.isComposing) return
+    if (composing || e.nativeEvent.isComposing || !canOpenResults) return
     if (e.key === 'Enter') {
       e.preventDefault()
       const result = allResults[selectedIndex]
@@ -411,7 +453,7 @@ export function SearchDialog(): React.ReactElement {
       e.preventDefault()
       selectIndex(Math.max(selectedIndex - 1, 0))
     }
-  }, [composing, allResults, selectedIndex, selectIndex, navigateToResult])
+  }, [canOpenResults, composing, allResults, selectedIndex, selectIndex, navigateToResult])
 
   // 自动滚动选中项到可视区域
   React.useEffect(() => {
@@ -434,7 +476,8 @@ export function SearchDialog(): React.ReactElement {
     return () => clearTimeout(focusTimer)
   }, [open])
 
-  const isSearching = loading || vaultSearch.loading || vaultStatus?.phase === 'indexing'
+  const isSearching = hasQuery && !composing
+    && (!currentResults || vaultStatus?.phase === 'indexing')
 
   return (
     <Dialog open={open} onOpenChange={setOpen} modal={false}>
@@ -475,16 +518,21 @@ export function SearchDialog(): React.ReactElement {
             aria-label="全局搜索关键词"
             className="min-w-0 flex-1 bg-transparent text-[14px] text-foreground placeholder:text-foreground/40 outline-none"
           />
-          {query && (
-            <button
-              onClick={handleClearQuery}
-              title="清空"
-              className="p-0.5 rounded text-foreground/30 hover:text-foreground/60 transition-colors"
-            >
-              <X size={14} />
-            </button>
-          )}
-          {isSearching && <Loader2 size={14} className="shrink-0 animate-spin text-foreground/40" aria-label="搜索中" />}
+          <button
+            type="button"
+            onClick={handleClearQuery}
+            title="清空"
+            disabled={!query}
+            className={cn(
+              'shrink-0 rounded p-0.5 text-foreground/30 transition-colors hover:text-foreground/60',
+              !query && 'invisible',
+            )}
+          >
+            <X size={14} />
+          </button>
+          {isSearching
+            ? <Loader2 size={14} className="shrink-0 animate-spin text-foreground/40" aria-label="搜索中" />
+            : <span className="size-3.5 shrink-0" aria-hidden />}
           <button
             onClick={() => void handleAgentSearch()}
             disabled={composing || queryTooLong || trimmedQuery.length < 2}
@@ -503,26 +551,27 @@ export function SearchDialog(): React.ReactElement {
 
         {/* 搜索结果 */}
         <div className="relative">
-          <div ref={listRef} className="max-h-[400px] overflow-y-auto scrollbar-thin">
-          {!hasSearched && (
+          <div ref={listRef} aria-busy={hasQuery && !canOpenResults} className="h-[min(400px,55dvh)] overflow-y-auto scrollbar-thin">
+          {!hasQuery && (
             <div className="py-12 text-center text-[13px] text-foreground/40">
               {queryTooLong ? `关键词不能超过 ${VAULT_SEARCH_MAX_QUERY_LENGTH} 个字符` : '输入关键词即可搜索'}
             </div>
           )}
 
-          {hasSearched && loading && allResults.length === 0 && !vaultEnabled && (
-            <div className="py-12 flex items-center justify-center gap-2 text-[13px] text-foreground/40">
-              <Loader2 size={14} className="animate-spin" />
-              <span>正在搜索...</span>
+          {hasQuery && !displayedResults && (
+            <div className="py-12 text-center text-[13px] text-foreground/40">
+              {composing ? '等待输入完成…' : '正在搜索…'}
             </div>
           )}
 
-          {hasSearched && !isSearching && allResults.length === 0 && !vaultSearch.error && vaultStatus?.phase !== 'error' && (
+          {displayedResults && allResults.length === 0 && !displayedResults.vaultError
+            && vaultStatus?.phase !== 'error' && vaultStatus?.phase !== 'indexing' && (
             <div className="py-8 flex flex-col items-center gap-3 text-[13px] text-foreground/40">
               <span>未找到匹配结果</span>
               <button
                 onClick={() => void handleAgentSearch()}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-medium bg-blue-500/10 text-blue-500 hover:bg-blue-500/20 transition-colors"
+                disabled={searchQuery.length < 2}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-medium bg-blue-500/10 text-blue-500 hover:bg-blue-500/20 transition-colors disabled:pointer-events-none disabled:opacity-50"
               >
                 <Bot size={12} />
                 <span>试试 Agent 搜索</span>
@@ -532,7 +581,7 @@ export function SearchDialog(): React.ReactElement {
 
           {/* 标题匹配区域 */}
           {titleResults.length > 0 && (
-            <div className="py-1 animate-in fade-in duration-150">
+            <div className="py-1">
               <div className="px-4 pt-2 pb-1 text-[11px] font-medium text-foreground/40 select-none">
                 标题匹配
               </div>
@@ -542,8 +591,9 @@ export function SearchDialog(): React.ReactElement {
                   result={result}
                   index={idx}
                   isSelected={selectedIndex === idx}
-                  committedQuery={searchQuery}
-                  miniMapDisabled={!sessionHoverPreviewEnabled}
+                  committedQuery={displayedResults?.query ?? ''}
+                  disabled={!canOpenResults}
+                  miniMapDisabled={!canOpenResults || !sessionHoverPreviewEnabled}
                   getAgentWorkspaceName={getAgentWorkspaceName}
                   onSelect={navigateToResult}
                   onHover={selectIndex}
@@ -552,24 +602,24 @@ export function SearchDialog(): React.ReactElement {
             </div>
           )}
 
-          {hasSearched && vaultEnabled && (
+          {displayedResults?.vaultEnabled && (
             <div className="py-1 border-t border-border/30" aria-label="Obsidian 文档结果">
               <div className="px-4 pt-2 pb-1 flex items-center gap-2 text-[11px] font-medium text-foreground/50">
                 <span>Obsidian 文档{vaultStatus?.displayName ? ` · ${vaultStatus.displayName}` : ''}</span>
-                {vaultResults.length > 0 && <span>{vaultResults.length} / {vaultSearch.response?.totalMatches}</span>}
-                {(vaultSearch.loading || vaultStatus?.phase === 'indexing') && <Loader2 size={12} className="animate-spin" />}
+                {vaultResults.length > 0 && <span>{vaultResults.length} / {displayedResults.vaultTotalMatches}</span>}
+                {vaultStatus?.phase === 'indexing' && <Loader2 size={12} className="animate-spin" />}
               </div>
-              {(vaultSearch.loading || vaultStatus?.phase === 'indexing' || vaultStatus?.phase === 'unconfigured'
-                || vaultSearch.error || vaultStatus?.phase === 'error' || !!vaultStatus?.skippedFiles
+              {(vaultStatus?.phase === 'indexing' || vaultStatus?.phase === 'unconfigured'
+                || displayedResults.vaultError || vaultStatus?.phase === 'error' || !!vaultStatus?.skippedFiles
                 || (vaultStatus?.phase === 'ready' && vaultResults.length === 0)) && (
                 <div role="status" className="px-4 pb-2 text-[12px] text-foreground/50">
-                  {vaultSearch.error || vaultStatus?.phase === 'error' ? 'Vault 搜索暂时不可用，请重试。'
+                  {displayedResults.vaultError || vaultStatus?.phase === 'error' ? 'Vault 搜索暂时不可用，请重试。'
                     : vaultStatus?.phase === 'unconfigured' ? '先打开一个 Obsidian Vault，即可搜索笔记。'
-                    : vaultSearch.loading || vaultStatus?.phase === 'indexing' ? `正在索引笔记 · 已处理 ${vaultStatus?.indexedFiles ?? 0} 篇`
+                    : vaultStatus?.phase === 'indexing' ? `正在索引笔记 · 已处理 ${vaultStatus.indexedFiles} 篇`
                     : vaultStatus?.skippedFiles ? `${vaultStatus.skippedFiles} 篇笔记过大或无法读取，未纳入索引。`
                     : '当前 Vault 没有匹配的笔记。'}
-                  {(vaultSearch.error || vaultStatus?.phase === 'error') && (
-                    <button type="button" className="ml-2 text-primary underline" onClick={() => setVaultRetry((value) => value + 1)}>重试</button>
+                  {(displayedResults.vaultError || vaultStatus?.phase === 'error') && (
+                    <button type="button" disabled={!canOpenResults} className="ml-2 text-primary underline" onClick={() => setVaultRetry((value) => value + 1)}>重试</button>
                   )}
                 </div>
               )}
@@ -579,9 +629,10 @@ export function SearchDialog(): React.ReactElement {
                   <button
                     key={resultKey(result)}
                     data-index={index}
+                    disabled={!canOpenResults}
                     onClick={() => navigateToResult(result)}
                     onMouseEnter={() => selectIndex(index)}
-                    className={cn('w-full flex items-start gap-2.5 px-4 py-2 text-left',
+                    className={cn('w-full flex items-start gap-2.5 px-4 py-2 text-left disabled:pointer-events-none',
                       index === selectedIndex ? 'bg-primary/10' : 'hover:bg-foreground/[0.04]')}
                   >
                     <FileText size={14} className="mt-0.5 shrink-0 text-primary/70" />
@@ -599,11 +650,10 @@ export function SearchDialog(): React.ReactElement {
           )}
 
           {/* 内容匹配区域 */}
-          {(contentResults.length > 0 || (loading && hasSearched && titleResults.length > 0)) && (
-            <div className="py-1 border-t border-border/30 animate-in fade-in duration-150">
+          {contentResults.length > 0 && (
+            <div className="py-1 border-t border-border/30">
               <div className="px-4 pt-2 pb-1 flex items-center gap-2 text-[11px] font-medium text-foreground/40 select-none">
                 <span>消息内容匹配</span>
-                {loading && <Loader2 size={12} className="animate-spin text-foreground/30" />}
               </div>
               {contentResults.map((result, i) => (
                 <SearchResultRow
@@ -611,8 +661,9 @@ export function SearchDialog(): React.ReactElement {
                   result={result}
                 index={titleResults.length + vaultResults.length + i}
                 isSelected={selectedIndex === titleResults.length + vaultResults.length + i}
-                  committedQuery={searchQuery}
-                  miniMapDisabled={!sessionHoverPreviewEnabled}
+                  committedQuery={displayedResults?.query ?? ''}
+                  disabled={!canOpenResults}
+                  miniMapDisabled={!canOpenResults || !sessionHoverPreviewEnabled}
                   getAgentWorkspaceName={getAgentWorkspaceName}
                   onSelect={navigateToResult}
                   onHover={selectIndex}

@@ -107,7 +107,8 @@ function serializeRawHtmlInline(state: MarkdownSerializerLike, node: ProseMirror
 }
 
 function serializeMathInline(state: MarkdownSerializerLike, node: ProseMirrorNode): void {
-  state.write(`$${stringAttr(node, 'latex')}$`)
+  const delimiter = node.attrs.delimiterLength === 2 ? '$$' : '$'
+  state.write(`${delimiter}${stringAttr(node, 'latex')}${delimiter}`)
 }
 
 function serializeMathBlock(state: MarkdownSerializerLike, node: ProseMirrorNode): void {
@@ -928,18 +929,25 @@ export const MathInline = Node.create({
   atom: true,
 
   addAttributes() {
-    return { latex: { default: '' } }
+    return { latex: { default: '' }, delimiterLength: { default: 1 } }
   },
 
   parseHTML() {
     return [{
       tag: 'span[data-type="math-inline"]',
-      getAttrs: (node) => node instanceof HTMLElement ? { latex: node.dataset.latex || '' } : false,
+      getAttrs: (node) => node instanceof HTMLElement ? {
+        latex: node.dataset.latex || '',
+        delimiterLength: node.dataset.delimiterLength === '2' ? 2 : 1,
+      } : false,
     }]
   },
 
   renderHTML({ node }) {
-    return ['span', { 'data-type': 'math-inline', 'data-latex': node.attrs.latex }]
+    return ['span', {
+      'data-type': 'math-inline',
+      'data-latex': node.attrs.latex,
+      'data-delimiter-length': node.attrs.delimiterLength === 2 ? '2' : undefined,
+    }]
   },
 
   addStorage() {

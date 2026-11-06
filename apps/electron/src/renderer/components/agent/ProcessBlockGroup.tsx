@@ -1,5 +1,7 @@
 import * as React from 'react'
+import { useAtomValue } from 'jotai'
 import { ChevronRight } from 'lucide-react'
+import { agentProcessExpandedByDefaultAtom } from '@/atoms/ui-preferences'
 import { cn } from '@/lib/utils'
 import { getToolDisplayName, getToolIcon } from './tool-utils'
 import type {
@@ -193,9 +195,8 @@ const StableProcessChild = React.memo(
 )
 
 export function ProcessBlockGroup({ blocks, isStreaming, renderChildren, isMessageTail = false }: ProcessBlockGroupProps): React.ReactElement {
-  const initialDisplayMode: ProcessGroupDisplayMode = !isStreaming
-    ? 'collapsed'
-    : 'expanded'
+  const defaultDisplayMode: ProcessGroupDisplayMode = useAtomValue(agentProcessExpandedByDefaultAtom) ? 'expanded' : 'collapsed'
+  const initialDisplayMode = isStreaming ? 'expanded' : defaultDisplayMode
   const [displayMode, setDisplayMode] = React.useState<ProcessGroupDisplayMode>(initialDisplayMode)
   const [shouldRenderContent, setShouldRenderContent] = React.useState(initialDisplayMode !== 'collapsed')
   const [keepProgressViewport, setKeepProgressViewport] = React.useState(!!isStreaming)
@@ -244,12 +245,15 @@ export function ProcessBlockGroup({ blocks, isStreaming, renderChildren, isMessa
       return
     }
 
-    const shouldAutoCollapseAfterCompletion = wasStreamingRef.current && !userToggledRef.current
+    const shouldAutoCollapseAfterCompletion = wasStreamingRef.current
+      && !userToggledRef.current
+      && defaultDisplayMode === 'collapsed'
     wasStreamingRef.current = false
 
     if (!shouldAutoCollapseAfterCompletion) {
+      setCollapseCountdown(null)
       setKeepProgressViewport(false)
-      if (!userToggledRef.current) setDisplayMode('collapsed')
+      if (!userToggledRef.current) setDisplayMode(defaultDisplayMode)
       return
     }
 
@@ -273,7 +277,7 @@ export function ProcessBlockGroup({ blocks, isStreaming, renderChildren, isMessa
     autoCollapseTimersRef.current.push(soundDelayTimer)
 
     return clearAutoCollapseTimers
-  }, [clearAutoCollapseTimers, isStreaming])
+  }, [clearAutoCollapseTimers, defaultDisplayMode, isStreaming])
 
   const scrollToLatest = React.useCallback(() => {
     if (!followLatestRef.current) return
@@ -430,6 +434,7 @@ export function ProcessBlockGroup({ blocks, isStreaming, renderChildren, isMessa
     <div className="space-y-1.5">
       <button
         type="button"
+        aria-expanded={isContentExpanded}
         className={cn(
           'flex max-w-full items-center gap-2 py-0.5 text-left transition-opacity group',
           'hover:opacity-70',

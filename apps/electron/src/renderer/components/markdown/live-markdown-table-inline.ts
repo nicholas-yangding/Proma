@@ -1,5 +1,6 @@
 import MarkdownIt from 'markdown-it'
 import { renderMarkdownMath } from '@/lib/markdown-math'
+import { readDollarMath } from '@/lib/markdown-math-syntax'
 import { isLikelyLiveMarkdownLatex } from './live-markdown-table'
 
 interface TableInlineEnvironment {
@@ -11,15 +12,17 @@ const markdown = new MarkdownIt({ html: false, breaks: true, linkify: false })
   .disable(['link', 'image', 'autolink'])
 
 markdown.inline.ruler.before('escape', 'table_math', (state, silent) => {
-  const remaining = state.src.slice(state.pos, state.posMax)
-  const match = remaining.match(/^(?:\$([^$\n]+)\$|\\\((.+?)\\\)|\\\[([\s\S]+?)\\\])/)
-  if (!match) return false
+  const lineBreak = state.src.indexOf('\n', state.pos)
+  const lineEnd = lineBreak < 0 ? state.posMax : Math.min(lineBreak, state.posMax)
+  const dollarMath = readDollarMath(state.src, state.pos, lineEnd)
+  const nativeMath = dollarMath ? null : /^(?:\\\((.+?)\\\)|\\\[([\s\S]+?)\\\])/.exec(state.src.slice(state.pos, state.posMax))
+  if (!dollarMath && !nativeMath) return false
   if (!silent) {
     const token = state.push('table_math', '', 0)
-    token.content = match[1] ?? match[2] ?? match[3] ?? ''
-    token.block = Boolean(match[3])
+    token.content = dollarMath?.content ?? nativeMath?.[1] ?? nativeMath?.[2] ?? ''
+    token.block = dollarMath?.delimiterLength === 2 || Boolean(nativeMath?.[2])
   }
-  state.pos += match[0].length
+  state.pos = dollarMath?.to ?? state.pos + (nativeMath?.[0].length ?? 0)
   return true
 })
 

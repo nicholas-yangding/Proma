@@ -1,3 +1,5 @@
+import { isMarkdownEscaped as isEscaped, readDollarMath } from '@/lib/markdown-math-syntax'
+
 export type InlineLiveMarkdownPreview =
   | { kind: 'math' | 'autolink'; from: number; to: number; content: string }
   | { kind: 'image'; from: number; to: number; src: string; alt: string; title: string }
@@ -46,12 +48,6 @@ export function isStandaloneRawMarkdownHtml(line: string): boolean {
   return findRawHtmlBlockEnd([line], 0) === 0
 }
 
-function isEscaped(source: string, offset: number): boolean {
-  let slashCount = 0
-  for (let index = offset - 1; index >= 0 && source[index] === '\\'; index -= 1) slashCount += 1
-  return slashCount % 2 === 1
-}
-
 function inlineCodeRanges(source: string): Array<{ from: number; to: number }> {
   const ranges: Array<{ from: number; to: number }> = []
   let opening: { from: number; length: number } | null = null
@@ -81,24 +77,19 @@ function overlapsInlineCode(ranges: Array<{ from: number; to: number }>, from: n
 export function findInlineLiveMarkdownPreviews(line: string): InlineLiveMarkdownPreview[] {
   const previews: InlineLiveMarkdownPreview[] = []
   const codeRanges = inlineCodeRanges(line)
-  const mathPatterns = [
-    { pattern: /(^|[^\\])\$([^$\n]+)\$/g, contentIndex: 2, markerOffset: (match: RegExpExecArray) => match[1]!.length },
-    { pattern: /\\\(([^\n]*?)\\\)/g, contentIndex: 1, markerOffset: () => 0 },
-  ]
+  for (let from = line.indexOf('$'); from !== -1; from = line.indexOf('$', from + 1)) {
+    if (overlapsInlineCode(codeRanges, from, from + 1)) continue
+    const math = readDollarMath(line, from)
+    if (!math || overlapsInlineCode(codeRanges, from, math.to)) continue
+    previews.push({ kind: 'math', from, to: math.to, content: math.content })
+    from = math.to - 1
+  }
 
-  for (const { pattern, contentIndex, markerOffset } of mathPatterns) {
-    let match: RegExpExecArray | null
-    while ((match = pattern.exec(line)) !== null) {
-      const from = match.index + markerOffset(match)
-      const to = from + match[0]!.length - markerOffset(match)
-      if (isEscaped(line, from) || overlapsInlineCode(codeRanges, from, to)) continue
-      previews.push({
-        kind: 'math',
-        from,
-        to,
-        content: match[contentIndex]!,
-      })
-    }
+  for (const match of line.matchAll(/\\\(([^\n]*?)\\\)/g)) {
+    const from = match.index
+    const to = from + match[0].length
+    if (isEscaped(line, from) || overlapsInlineCode(codeRanges, from, to)) continue
+    previews.push({ kind: 'math', from, to, content: match[1]! })
   }
 
   const imagePattern = /!\[([^\]]*)\]\((?:<([^>]+)>|([^\s)]+))(?:\s+(?:"([^"]*)"|'([^']*)'|\(([^)]*)\)))?\)/g

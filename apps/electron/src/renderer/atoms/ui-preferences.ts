@@ -18,6 +18,8 @@ export const richTextRenderingEnabledAtom = atom<boolean>(false)
 /** 左侧会话列表悬浮预览迷你地图（默认关闭，需手动开启） */
 export const sessionHoverPreviewEnabledAtom = atom<boolean>(false)
 
+export const agentProcessExpandedByDefaultAtom = atom(false)
+
 /** 默认全部可见；初始化后由通用设置同步。 */
 export const productivityToolsAtom = atom<ProductivityToolsSettings>(DEFAULT_PRODUCTIVITY_TOOLS_SETTINGS)
 
@@ -31,6 +33,7 @@ export async function initializeUiPreferences(
   setRichTextRenderingEnabled?: (enabled: boolean) => void,
   setSessionHoverPreviewEnabled?: (enabled: boolean) => void,
   setProductivityTools?: (settings: ProductivityToolsSettings) => void,
+  setAgentProcessExpandedByDefault?: (expanded: boolean) => void,
 ): Promise<void> {
   try {
     const settings = await window.electronAPI.getSettings()
@@ -38,6 +41,7 @@ export async function initializeUiPreferences(
     setRichTextRenderingEnabled?.(settings.richTextRenderingEnabled ?? false)
     setSessionHoverPreviewEnabled?.(settings.sessionHoverPreviewEnabled ?? false)
     setProductivityTools?.(settings.productivityTools)
+    setAgentProcessExpandedByDefault?.(settings.agentProcessExpandedByDefault === true)
   } catch (error) {
     console.error('[UI偏好] 初始化失败:', error)
   }

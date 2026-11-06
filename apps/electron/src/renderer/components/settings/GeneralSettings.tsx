@@ -7,6 +7,7 @@
 
 import * as React from 'react'
 import { useAtom } from 'jotai'
+import { toast } from 'sonner'
 import { Camera, Check, ExternalLink, ImagePlus, Play, Volume2 } from 'lucide-react'
 import Picker from '@emoji-mart/react'
 import data from '@emoji-mart/data'
@@ -41,6 +42,7 @@ import {
   longTextPasteAsAttachmentEnabledAtom,
   richTextRenderingEnabledAtom,
   sessionHoverPreviewEnabledAtom,
+  agentProcessExpandedByDefaultAtom,
   productivityToolsAtom,
   updateProductivityTools,
   updateLongTextPasteAsAttachmentEnabled,
@@ -70,6 +72,8 @@ export function GeneralSettings(): React.ReactElement {
   const [longTextPasteAsAttachmentEnabled, setLongTextPasteAsAttachmentEnabled] = useAtom(longTextPasteAsAttachmentEnabledAtom)
   const [richTextRenderingEnabled, setRichTextRenderingEnabled] = useAtom(richTextRenderingEnabledAtom)
   const [sessionHoverPreviewEnabled, setSessionHoverPreviewEnabled] = useAtom(sessionHoverPreviewEnabledAtom)
+  const [agentProcessExpandedByDefault, setAgentProcessExpandedByDefault] = useAtom(agentProcessExpandedByDefaultAtom)
+  const [savingAgentProcessPreference, setSavingAgentProcessPreference] = React.useState(false)
   const [productivityTools, setProductivityTools] = useAtom(productivityToolsAtom)
   const [isEditingName, setIsEditingName] = React.useState(false)
   const [nameInput, setNameInput] = React.useState(userProfile.userName)
@@ -111,6 +115,19 @@ export function GeneralSettings(): React.ReactElement {
     } catch (error) {
       console.error('[通用设置] 更新 Git/PR 标识失败:', error)
       setGitAttributionEnabled(!checked)
+    }
+  }
+
+  const handleAgentProcessPreferenceChange = async (expanded: boolean): Promise<void> => {
+    setSavingAgentProcessPreference(true)
+    try {
+      await window.electronAPI.updateSettings({ agentProcessExpandedByDefault: expanded })
+      setAgentProcessExpandedByDefault(expanded)
+    } catch (error) {
+      console.error('[通用设置] 保存 Agent 执行过程设置失败:', error)
+      toast.error('保存 Agent 执行过程设置失败')
+    } finally {
+      setSavingAgentProcessPreference(false)
     }
   }
 
@@ -412,6 +429,13 @@ export function GeneralSettings(): React.ReactElement {
               setSessionHoverPreviewEnabled(checked)
               updateSessionHoverPreviewEnabled(checked)
             }}
+          />
+          <SettingsToggle
+            label="默认展开 Agent 执行过程"
+            description="开启后，历史回复和刚完成的回复会展开思考与工具调用，可单独收起。"
+            checked={agentProcessExpandedByDefault}
+            disabled={savingAgentProcessPreference}
+            onCheckedChange={(checked) => { void handleAgentProcessPreferenceChange(checked) }}
           />
           {isMac && (
             <SettingsToggle

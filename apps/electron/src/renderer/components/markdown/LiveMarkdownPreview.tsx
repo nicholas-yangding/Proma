@@ -8,6 +8,7 @@ import { CodeBlock, MermaidBlock } from '@proma/ui'
 import { shouldRenderMermaidCodeBlock } from '@/lib/mermaid-detection'
 import { copyTextToClipboard } from '@/lib/clipboard'
 import { renderMarkdownMath } from '@/lib/markdown-math'
+import { readStandaloneDollarMath } from '@/lib/markdown-math-syntax'
 import {
   findInlineLiveMarkdownPreviews,
   findRawHtmlBlockEnd,
@@ -707,6 +708,12 @@ function buildBlocks(
         }
         number = closing
       }
+      continue
+    }
+    const standaloneMath = readStandaloneDollarMath(line)
+    if (standaloneMath !== null) {
+      const { from, to } = state.doc.line(number)
+      blocks.push({ kind: 'math', from, to, decoration: Decoration.replace({ widget: new MathWidget(standaloneMath, from), block: true }) })
       continue
     }
     const closingDelimiter = getDisplayMathClosingDelimiter(line)
