@@ -179,6 +179,8 @@ interface RichTextInputProps {
   attachedDirs?: string[]
   /** 会话级附加目录路径列表（@ 引用时标记为会话文件） */
   sessionAttachedDirs?: string[]
+  /** 文件窗口区当前打开文件的绝对路径；@ 联想时置顶显示。 */
+  currentOpenFilePath?: string | null
   /** HTML 草稿值（切换会话恢复时使用，保留 mention 等富文本结构） */
   htmlValue?: string
   /** HTML 值变更回调（用于保存富文本草稿） */
@@ -234,6 +236,7 @@ export const RichTextInput = forwardRef<RichTextInputHandle, RichTextInputProps>
   draftSyncVersion = 0,
   attachedDirs = [],
   sessionAttachedDirs = [],
+  currentOpenFilePath,
   htmlValue,
   onHtmlChange,
   sendWithCmdEnter = false,
@@ -297,6 +300,9 @@ export const RichTextInput = forwardRef<RichTextInputHandle, RichTextInputProps>
   // 会话级附加目录路径引用（给 @ 文件引用使用，标记为 session）
   const sessionAttachedDirsRef = useRef<string[]>(sessionAttachedDirs)
   sessionAttachedDirsRef.current = sessionAttachedDirs
+  // 文件窗口区当前打开文件（给 @ 文件联想置顶使用）
+  const currentOpenFileRef = useRef<string | null>(currentOpenFilePath ?? null)
+  currentOpenFileRef.current = currentOpenFilePath ?? null
   // 工作区 slug 引用（给 / Skill 和 # MCP suggestion 使用）
   const workspaceSlugRef = useRef<string | null>(workspaceSlug ?? null)
   workspaceSlugRef.current = workspaceSlug ?? null
@@ -377,6 +383,7 @@ export const RichTextInput = forwardRef<RichTextInputHandle, RichTextInputProps>
       attachedDirsRef,
       mentionItemCountRef,
       sessionAttachedDirsRef,
+      currentOpenFileRef,
     ),
     [],
   )

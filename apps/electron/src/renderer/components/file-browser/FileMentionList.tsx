@@ -1,14 +1,14 @@
 /**
  * FileMentionList — @ 引用文件下拉列表
  *
- * 显示当前会话可见的统一文件树，支持键盘导航（上/下/Enter/Escape/`）。
+ * 显示当前会话可见的统一文件树，支持键盘导航（上/下/Tab 选中/Escape/`）。
  * 通过 React.useImperativeHandle 暴露 onKeyDown 给 TipTap Suggestion。
  *
  * 会话文件通过 badge 标记；项目文件和会话文件不再分区展示。
  *
  * 交互：
- * - 文件夹初始折叠，Tab 键展开/折叠，→/← 方向键辅助
- * - 任何时候按 Enter 完成 @ 引用（文件或目录均可）
+ * - 文件夹初始折叠，→/← 方向键展开/折叠
+ * - 任何时候按 Tab 完成 @ 引用（文件或目录均可）；Enter 不选中，走编辑器默认换行
  * - 鼠标单击文件夹：展开/折叠；双击文件夹：选中并插入 @ 引用
  */
 
@@ -58,6 +58,8 @@ export interface FileTreeNode {
   depth: number
   children: FileTreeNode[]
   expanded: boolean
+  /** 文件窗口区当前打开文件的置顶行，不参与树与展开状态。 */
+  isPinned?: boolean
 }
 
 // ===== Props & Ref =====
@@ -65,6 +67,8 @@ export interface FileTreeNode {
 export interface FileMentionListProps {
   sessionEntries: FileIndexEntry[]
   workspaceEntries: FileIndexEntry[]
+  /** 文件窗口区当前打开的文件；存在时置顶显示为独立行。 */
+  pinnedEntry?: FileIndexEntry
   onSelect: (item: Pick<FileIndexEntry, 'name' | 'path' | 'type' | 'source'>) => void
   /** 作为统一命令菜单子层时，← 可返回命令根层。 */
   onBack?: () => void
@@ -167,7 +171,7 @@ function getTreeNodeStateKey(node: Pick<FileTreeNode, 'source' | 'treePath'>): s
 // ===== 组件 =====
 
 export const FileMentionList = React.forwardRef<FileMentionRef, FileMentionListProps>(
-  function FileMentionList({ sessionEntries, workspaceEntries, onSelect, onBack, embedded = false }, ref) {
+  function FileMentionList({ sessionEntries, workspaceEntries, pinnedEntry, onSelect, onBack, embedded = false }, ref) {
     // 构建一棵连续树；项目与会话来源只通过 badge 区分，不形成两个列表。
     const tree = React.useMemo(
       () => buildFileMentionTree([...workspaceEntries, ...sessionEntries]),
@@ -187,9 +191,26 @@ export const FileMentionList = React.forwardRef<FileMentionRef, FileMentionListP
       return inject(tree)
     }, [tree, expandedPaths])
 
+    const pinnedNode = React.useMemo<FileTreeNode | null>(
+      () => pinnedEntry
+        ? {
+            name: pinnedEntry.name,
+            path: pinnedEntry.path,
+            treePath: normalizeTreePath(pinnedEntry.path),
+            type: 'file',
+            source: pinnedEntry.source,
+            depth: 0,
+            children: [],
+            expanded: false,
+            isPinned: true,
+          }
+        : null,
+      [pinnedEntry],
+    )
+
     const visibleNodes = React.useMemo(
-      () => flattenVisible(treeWithState),
-      [treeWithState],
+      () => (pinnedNode ? [pinnedNode, ...flattenVisible(treeWithState)] : flattenVisible(treeWithState)),
+      [treeWithState, pinnedNode],
     )
 
     const totalItems = visibleNodes.length
@@ -252,12 +273,12 @@ export const FileMentionList = React.forwardRef<FileMentionRef, FileMentionListP
           setSelectedIndex((prev) => (prev >= totalItems - 1 ? 0 : prev + 1))
           return true
         }
+        // Tab 选中高亮项（Enter 不选中，回落给编辑器换行；展开/折叠用 →/←）。
         if (event.key === 'Tab') {
           event.preventDefault()
+          if (totalItems === 0) return true
           const node = getNodeAt(selectedIndex)
-          if (node && node.type === 'dir' && node.children.length > 0) {
-            toggleExpand(node)
-          }
+          if (node) handleSelect(node)
           return true
         }
         if (event.key === 'ArrowRight') {
@@ -278,13 +299,7 @@ export const FileMentionList = React.forwardRef<FileMentionRef, FileMentionListP
           }
           return true
         }
-        if (event.key === 'Enter') {
-          if (totalItems === 0) return false
-          event.preventDefault()
-          const node = getNodeAt(selectedIndex)
-          if (node) handleSelect(node)
-          return true
-        }
+        // Enter 不选中：返回 false 让编辑器走默认换行，避免误触发引用。
         // Escape 不在此处理：返回 false 交还给 TipTap suggestion 插件内置的
         // Escape 分支，由它调用 onExit（触发 cleanup 移除弹窗）并 dispatchExit
         // 重置插件 active 状态。若在此 return true，插件会认为已处理而跳过退出，
@@ -301,7 +316,7 @@ export const FileMentionList = React.forwardRef<FileMentionRef, FileMentionListP
         <div className={cn(!embedded && 'rounded-lg border bg-popover shadow-lg', 'overflow-hidden min-w-[260px]')}>
           <div className="flex items-center justify-between gap-2 px-2.5 py-1.5 text-[11px] font-medium bg-primary/10 text-primary border-b border-border/50">
             <span>文件</span>
-            <span className="font-normal text-muted-foreground">Esc 关闭 · Enter 选中</span>
+            <span className="font-normal text-muted-foreground">Esc 关闭 · Tab 选中</span>
           </div>
           <div className="p-2 text-[11px] text-muted-foreground">无匹配文件</div>
         </div>
@@ -321,12 +336,36 @@ export const FileMentionList = React.forwardRef<FileMentionRef, FileMentionListP
       >
         <div className="flex items-center px-2.5 py-1.5 text-[11px] font-medium bg-primary/10 text-primary border-b border-border/50">
           <span>文件</span>
-          <span className="ml-auto font-normal text-muted-foreground">Esc 关闭 · Enter 选中</span>
+          <span className="ml-auto font-normal text-muted-foreground">Esc 关闭 · Tab 选中</span>
         </div>
+        {pinnedNode && (
+          <button
+            type="button"
+            data-mention-item=""
+            className={cn(
+              'w-full flex items-center gap-1.5 px-2.5 py-1 text-left text-xs transition-colors border-b border-border/40',
+              selectedIndex === 0
+                ? 'bg-accent text-accent-foreground'
+                : 'hover:bg-accent/50',
+            )}
+            style={{ paddingLeft: 8 }}
+            onMouseDown={(e) => {
+              e.preventDefault()
+              handleSetIndex(0)
+              handleSelect(pinnedNode)
+            }}
+          >
+            <span className="w-3 shrink-0" />
+            <FileTypeIcon name={pinnedNode.name} isDirectory={false} size={12} />
+            <span className="truncate flex-1 font-medium">{pinnedNode.name}</span>
+            <span className="rounded-md bg-primary/10 px-1.5 py-0.5 text-[10px] leading-none text-primary shrink-0">当前打开</span>
+            <span className="text-[10px] text-muted-foreground/60 truncate max-w-[140px] shrink-[2]">{pinnedNode.path}</span>
+          </button>
+        )}
         <TreeNodeList
           nodes={treeWithState}
           selectedIndex={selectedIndex}
-          baseIndex={0}
+          baseIndex={pinnedNode ? 1 : 0}
           onSelect={handleSelect}
           onToggle={toggleExpand}
           setSelectedIndex={handleSetIndex}
@@ -461,12 +500,12 @@ function TreeNodeList({
           {/* 选中文件夹时的快捷键提示 */}
           {isSelected && node.type === 'dir' && node.children.length > 0 && !node.expanded && (
             <span className="text-[10px] text-muted-foreground/60 shrink-0 bg-muted/50 rounded px-1 py-px">
-              Tab 展开
+              → 展开
             </span>
           )}
           {isSelected && node.type === 'dir' && node.children.length > 0 && node.expanded && (
             <span className="text-[10px] text-muted-foreground/60 shrink-0 bg-muted/50 rounded px-1 py-px">
-              Tab 折叠
+              ← 折叠
             </span>
           )}
         </button>

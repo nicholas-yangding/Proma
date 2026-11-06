@@ -193,6 +193,9 @@ const AgentScopedRichTextInput = React.forwardRef<RichTextInputHandle, AgentScop
     const draftSyncVersion = useAtomValue(agentSessionDraftSyncVersionAtomFamily(sessionId))
     const setDraftsMap = useSetAtom(agentSessionDraftsAtom)
     const setDraftHtmlMap = useSetAtom(agentSessionDraftHtmlAtom)
+    // 文件窗口区当前打开文件：@ 联想置顶引用。
+    const previewFileMap = useAtomValue(previewFileMapAtom)
+    const currentOpenFilePath = previewFileMap.get(sessionId)?.filePath ?? null
 
     const handleChange = React.useCallback((nextValue: string): void => {
       setDraftsMap((previous) => {
@@ -229,6 +232,7 @@ const AgentScopedRichTextInput = React.forwardRef<RichTextInputHandle, AgentScop
         htmlValue={htmlValue}
         onHtmlChange={handleHtmlChange}
         sessionId={sessionId}
+        currentOpenFilePath={currentOpenFilePath}
       />
     )
   },

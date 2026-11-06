@@ -16,6 +16,7 @@ import type { FileIndexEntry } from '@proma/shared'
 import { createDebouncedSuggestionLoader, createLatestSuggestionRequestGuard, createMentionPopup, positionPopup, isSuggestionTriggerPresent, shouldSuppressEscTrigger, shouldClearEscSuppressionOnExit, type EscSuppressedTrigger } from '@/components/agent/mention-popup-utils'
 import { shouldAllowMentionTrigger, shouldShowMentionSuggestion } from '@/components/ai-elements/mention-utils'
 import { resolveFileMentionPath } from './file-mention-path'
+import { pinCurrentFileEntry } from './file-mention-pin'
 
 type MentionSelection = Pick<FileIndexEntry, 'name' | 'path' | 'type' | 'source'>
 
@@ -25,6 +26,7 @@ export function createFileMentionSuggestion(
   attachedDirsRef?: React.RefObject<string[]>,
   mentionItemCountRef?: React.MutableRefObject<number>,
   sessionAttachedDirsRef?: React.RefObject<string[]>,
+  currentFileRef?: React.RefObject<string | null>,
 ): Omit<SuggestionOptions<FileIndexEntry>, 'editor'> {
   let missingWorkspaceToastShown = false
   // Esc 抑制：记录被 Esc 关闭的触发片段文本。
@@ -35,6 +37,8 @@ export function createFileMentionSuggestion(
   let suppressedTrigger: EscSuppressedTrigger | null = null
   const requestGuard = createLatestSuggestionRequestGuard<FileIndexEntry>()
   const queryLoader = createDebouncedSuggestionLoader(requestGuard)
+  // pinned 与 items() 同步写入、render 时读取；cleanup 重置避免跨触发残留。
+  let latestPinned: FileIndexEntry | undefined
 
   return {
     char: '@',
@@ -81,7 +85,9 @@ export function createFileMentionSuggestion(
           additionalPaths.length > 0 ? additionalPaths : undefined,
           sessionPaths.length > 0 ? sessionPaths : undefined,
         )
-        return result.entries
+        const pinned = pinCurrentFileEntry(result.entries, currentFileRef?.current, query ?? '')
+        latestPinned = pinned.pinnedEntry
+        return pinned.entries
       } catch (error) {
         console.error('[FileMention] search failed:', error)
         return []
@@ -115,6 +121,7 @@ export function createFileMentionSuggestion(
           props: {
             sessionEntries,
             workspaceEntries,
+            pinnedEntry: latestPinned,
             onSelect: selectItem,
           },
           editor: props.editor,
@@ -128,6 +135,7 @@ export function createFileMentionSuggestion(
 
       function cleanup() {
         queryLoader.cancel()
+        latestPinned = undefined
         if (blurHandler && editorRef) {
           editorRef.view.dom.removeEventListener('blur', blurHandler, true)
           blurHandler = null
@@ -214,6 +222,7 @@ export function createFileMentionSuggestion(
           renderer?.updateProps({
             sessionEntries,
             workspaceEntries,
+            pinnedEntry: latestPinned,
             onSelect: selectItem,
           })
           anchorPopup()

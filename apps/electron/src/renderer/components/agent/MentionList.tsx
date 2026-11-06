@@ -1,7 +1,7 @@
 /**
  * MentionList — 泛型 Mention 下拉列表
  *
- * 统一键盘导航（上/下/Enter/Escape）、选中高亮、滚动定位。
+ * 统一键盘导航（上/下/Tab 选中/Escape）、选中高亮、滚动定位。
  * 通过 renderItem / keyExtractor 适配不同 Mention 类型（Skill、MCP 等）。
  * 通过 React.useImperativeHandle 暴露 onKeyDown 给 TipTap Suggestion。
  */
@@ -27,7 +27,7 @@ function MentionHeader({ label }: { label?: string }): React.ReactElement {
   return (
     <div className="flex items-center justify-between gap-2 px-2.5 py-1.5 text-[11px] font-medium bg-primary/10 text-primary border-b border-border/50">
       <span>{label}</span>
-      <span className="font-normal text-muted-foreground">Esc 关闭 · Enter 选中</span>
+      <span className="font-normal text-muted-foreground">Esc 关闭 · Tab 选中</span>
     </div>
   )
 }
@@ -64,8 +64,10 @@ function MentionListInner<T>(
         setLocalIndex((prev) => (prev >= items.length - 1 ? 0 : prev + 1))
         return true
       }
-      if (event.key === 'Enter') {
-        if (items.length === 0) return false
+      // Tab 选中高亮项；Enter 不选中，返回 false 让编辑器走默认换行（与 @ 文件联想一致）。
+      if (event.key === 'Tab') {
+        event.preventDefault()
+        if (items.length === 0) return true
         const item = items[localIndex]
         if (item) onSelect(item)
         return true
