@@ -13,7 +13,7 @@ import type { BuiltinMcpCategory, McpToolSummary } from '@proma/shared'
 import manifest from './default-mcp.json' with { type: 'json' }
 
 export interface BuiltinMcpDefinition {
-  /** 内置能力 ID（如 'proma-cloud'）。 */
+  /** 内置能力 ID。 */
   id: string
   /** 运行时真实 server 名，下划线安全（= prompt = 注入 = UI 真实名） */
   name: string
@@ -26,7 +26,7 @@ export interface BuiltinMcpDefinition {
   deletable: boolean
   /** 默认是否向 Agent 注入。 */
   defaultEnabled: boolean
-  /** 是否提供开关（基础设施型如 proma-cloud 置 false） */
+  /** 是否提供开关（基础设施型置 false） */
   toggleable: boolean
   tools: McpToolSummary[]
 }

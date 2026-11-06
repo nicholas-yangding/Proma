@@ -940,10 +940,10 @@ function buildVisionRelayTools(sdk: PiSdk, ctx: PiBuiltinToolsContext): ToolDefi
 // ===== Collaboration 工具（占位，下阶段实现） =====
 
 // collaboration 逻辑较重（涉及子会话生命周期管理、EventBus 订阅、BlockedEvent 冒泡），
-// 需要独立桥接文件。当前阶段先确保 automation 和 proma-cloud 可用。
+// 需要独立桥接文件。当前阶段先确保 automation 可用。
 // TODO: 从 agent-collaboration-tools.ts 提取核心逻辑到 service 层，再桥接到 Pi。
 
-// ===== Proma Cloud 工具 =====
+// ===== Browser 工具 =====
 
 function buildBrowserTools(sdk: PiSdk, ctx: PiBuiltinToolsContext): ToolDefinition[] {
   return [
@@ -1538,16 +1538,6 @@ function buildAgentTerminalTools(sdk: PiSdk, ctx: PiBuiltinToolsContext): ToolDe
   ] as ToolDefinition[]
 }
 
-function buildPromaCloudTools(sdk: PiSdk, _ctx: PiBuiltinToolsContext): ToolDefinition[] {
-  // proma-cloud MCP 工具（get_credentials / create_app_key）通常由 Proma 的
-  // 内置 MCP server 进程独立提供（非 SDK in-process），Pi adapter 在 orchestrator
-  // 构建 mcpServers 后通过 customTools 或 MCP stdio 通道访问。
-  // 如果 proma-cloud 是 SDK in-process MCP，需要在此桥接：
-  // 当前实现中 proma-cloud 走的是外部 MCP（不在 injectBuiltinMcpServers 内），
-  // 所以 Pi runtime 需要通过 MCP stdio transport 独立连接，不在这里注册。
-  return []
-}
-
 // ===== 统一入口 =====
 
 export interface PiBuiltinToolsResult {
@@ -1650,9 +1640,6 @@ export async function buildPiBuiltinTools(
   } catch (error) {
     console.error('[Pi 桥接] 注入视觉助手失败:', error)
   }
-
-  const cloudTools = buildPromaCloudTools(sdk, ctx)
-  tools.push(...cloudTools)
 
   return { tools, collaborationAvailable }
 }
