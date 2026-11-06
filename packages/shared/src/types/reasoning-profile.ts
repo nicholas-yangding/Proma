@@ -50,7 +50,7 @@ export interface ReasoningEncoding {
 }
 
 export interface ReasoningProfile {
-  id: 'deepseek-v4-flash' | 'deepseek-flash' | 'deepseek-v4-pro' | 'kimi-k3' | 'glm-5.2' | 'glm-5.3' | 'openai-reasoning-standard' | 'openai-reasoning-max' | 'openai-reasoning-astra' | 'openai-reasoning-sol-luna'
+  id: 'deepseek-v4-flash' | 'deepseek-flash' | 'deepseek-v4-pro' | 'kimi-k3' | 'glm-5.2' | 'glm-5.3' | 'openai-reasoning-standard' | 'openai-reasoning-max' | 'openai-reasoning-astra' | 'openai-reasoning-sol-luna' | 'openai-reasoning-sol-61'
   levels: readonly AgentThinkingLevel[]
   defaultLevel: AgentThinkingLevel
   normalize(level: AgentThinkingLevel | undefined): AgentThinkingLevel
@@ -326,7 +326,14 @@ const OPENAI_ASTRA_PROFILE: ReasoningProfile = {
   },
 }
 
-/** GPT-6 Sol/Luna allow disabling reasoning and default to medium effort. */
+const OPENAI_SOL_61_PROFILE: ReasoningProfile = {
+  ...OPENAI_ASTRA_PROFILE,
+  id: 'openai-reasoning-sol-61',
+  defaultLevel: 'medium',
+  normalize: (level = 'medium') => OPENAI_ASTRA_PROFILE.normalize(level),
+}
+
+/** GPT-6 Sol/Luna 和 GPT-6.1 Terra 可关闭推理，默认中档。 */
 const OPENAI_SOL_LUNA_PROFILE: ReasoningProfile = {
   id: 'openai-reasoning-sol-luna',
   levels: ['off', 'low', 'medium', 'high', 'xhigh', 'max'],
@@ -348,6 +355,7 @@ export const REASONING_PROFILES: readonly ReasoningProfile[] = [
   OPENAI_STANDARD_PROFILE,
   OPENAI_MAX_PROFILE,
   OPENAI_ASTRA_PROFILE,
+  OPENAI_SOL_61_PROFILE,
   OPENAI_SOL_LUNA_PROFILE,
 ]
 
@@ -362,7 +370,10 @@ export function resolveReasoningProfile(input: ResolveReasoningProfileInput): Re
   if (isGpt6AstraFamily(modelId)) {
     return OPENAI_ASTRA_PROFILE.encodings[input.transport] ? OPENAI_ASTRA_PROFILE : undefined
   }
-  if (isGpt6SolFamily(modelId) || isGpt6LunaFamily(modelId)) {
+  if (modelId === 'gpt-6.1-sol') {
+    return OPENAI_SOL_61_PROFILE.encodings[input.transport] ? OPENAI_SOL_61_PROFILE : undefined
+  }
+  if (modelId === 'gpt-6.1-terra' || isGpt6SolFamily(modelId) || isGpt6LunaFamily(modelId)) {
     return OPENAI_SOL_LUNA_PROFILE.encodings[input.transport] ? OPENAI_SOL_LUNA_PROFILE : undefined
   }
   const profile = /^deepseek-flash(?:-|$)/.test(modelId)

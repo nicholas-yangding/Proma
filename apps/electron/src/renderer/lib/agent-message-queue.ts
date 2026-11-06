@@ -6,6 +6,7 @@ import {
   expandAgentHistoryQuoteMentions,
   parseQuotedSelectionMention,
 } from './quoted-selection'
+import { AGENT_DELEGATION_MENTION_SOURCE } from '../../types/settings'
 import { ENCODED_MENTION_VALUE_PATTERN, PLAIN_MENTION_VALUE_PATTERN } from './mention-patterns'
 
 export type QueueDropPlacement = 'before' | 'after'
@@ -140,7 +141,7 @@ export interface QueuedMessageSendPayload {
 }
 
 /** 队列预览专用片段：保留原始消息用于发送，同时把引用协议渲染为可读芯片。 */
-export type QueuedMessageReferenceType = 'file' | 'skill' | 'mcp' | 'session' | 'todo' | 'calendar_event' | 'quote'
+export type QueuedMessageReferenceType = 'file' | 'skill' | 'mcp' | 'session' | 'todo' | 'calendar_event' | 'quote' | 'agent'
 
 export type QueuedMessageDisplayPart =
   | { type: 'text'; value: string }
@@ -165,18 +166,21 @@ function escapeHtmlAttribute(text: string): string {
 }
 
 function renderQueuedParagraphHtml(text: string): string {
-  const quoteMarkerPattern = /&quote:[A-Za-z0-9%_.!~*'()-]+/g
+  const markerPattern = new RegExp(String.raw`&quote:[A-Za-z0-9%_.!~*'()-]+|${AGENT_DELEGATION_MENTION_SOURCE}`, 'gu')
   let html = ''
   let lastIndex = 0
 
-  for (const match of text.matchAll(quoteMarkerPattern)) {
+  for (const match of text.matchAll(markerPattern)) {
     if (match.index > lastIndex) {
       html += escapeHtml(text.slice(lastIndex, match.index))
     }
 
     const marker = match[0]
-    const quote = parseQuotedSelectionMention(marker)
-    if (!quote) {
+    const agentAlias = match.groups?.agent
+    const quote = !agentAlias && parseQuotedSelectionMention(marker)
+    if (agentAlias) {
+      html += `<span data-type="mention" data-id="${agentAlias}" data-label="${agentAlias}" data-mention-suggestion-char="@" data-mention-reference-type="agent">@${agentAlias}</span>`
+    } else if (!quote) {
       html += escapeHtml(marker)
     } else {
       const payload = marker.slice('&quote:'.length)
@@ -212,7 +216,7 @@ const REF_PATTERN = new RegExp(
   'gu',
 )
 const DISPLAY_REFERENCE_PATTERN = new RegExp(
-  String.raw`&quote:(?<quote>[A-Za-z0-9%_.!~*'()-]+)|@file:(?<file>${ENCODED_MENTION_VALUE_PATTERN})|/skill:(?<skill>${PLAIN_MENTION_VALUE_PATTERN})|#mcp:(?<mcp>${PLAIN_MENTION_VALUE_PATTERN})|&session:(?<session>[A-Za-z0-9-]+)(?:(?:~|::)(?<sessionLabel>${ENCODED_MENTION_VALUE_PATTERN}))?|&todo:(?<todo>[A-Za-z0-9-]+)(?:(?:~|::)(?<todoLabel>${ENCODED_MENTION_VALUE_PATTERN}))?|&calendar_event:(?<calendarEvent>[A-Za-z0-9-]+)(?:(?:~|::)(?<calendarEventLabel>${ENCODED_MENTION_VALUE_PATTERN}))?`,
+  String.raw`&quote:(?<quote>[A-Za-z0-9%_.!~*'()-]+)|@file:(?<file>${ENCODED_MENTION_VALUE_PATTERN})|/skill:(?<skill>${PLAIN_MENTION_VALUE_PATTERN})|#mcp:(?<mcp>${PLAIN_MENTION_VALUE_PATTERN})|&session:(?<session>[A-Za-z0-9-]+)(?:(?:~|::)(?<sessionLabel>${ENCODED_MENTION_VALUE_PATTERN}))?|&todo:(?<todo>[A-Za-z0-9-]+)(?:(?:~|::)(?<todoLabel>${ENCODED_MENTION_VALUE_PATTERN}))?|&calendar_event:(?<calendarEvent>[A-Za-z0-9-]+)(?:(?:~|::)(?<calendarEventLabel>${ENCODED_MENTION_VALUE_PATTERN}))?|${AGENT_DELEGATION_MENTION_SOURCE}`,
   'gu',
 )
 
@@ -284,6 +288,10 @@ export function getQueuedMessageDisplayParts(
       referenceType = 'calendar_event'
       id = groups.calendarEvent
       rawLabel = groups.calendarEventLabel
+    } else if (groups.agent) {
+      referenceType = 'agent'
+      id = groups.agent
+      rawLabel = `@${id}`
     } else {
       continue
     }

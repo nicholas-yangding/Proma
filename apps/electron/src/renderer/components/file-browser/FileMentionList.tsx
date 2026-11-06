@@ -16,7 +16,7 @@ import * as React from 'react'
 import { cn } from '@/lib/utils'
 import type { FileIndexEntry } from '@proma/shared'
 import { FileTypeIcon } from './FileTypeIcon'
-import { ChevronRight } from 'lucide-react'
+import { Bot, ChevronRight } from 'lucide-react'
 import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip'
 
 // ===== Error Boundary =====
@@ -64,7 +64,18 @@ export interface FileTreeNode {
 
 // ===== Props & Ref =====
 
+export interface AgentMentionEntry {
+  alias: string
+  description: string
+}
+
+type MentionRow = { kind: 'file'; node: FileTreeNode } | { kind: 'agent'; entry: AgentMentionEntry }
+
+const EMPTY_AGENT_ENTRIES: AgentMentionEntry[] = []
+
 export interface FileMentionListProps {
+  agentEntries?: AgentMentionEntry[]
+  onSelectAgent?: (item: AgentMentionEntry) => void
   sessionEntries: FileIndexEntry[]
   workspaceEntries: FileIndexEntry[]
   /** 文件窗口区当前打开的文件；存在时置顶显示为独立行。 */
@@ -171,7 +182,16 @@ function getTreeNodeStateKey(node: Pick<FileTreeNode, 'source' | 'treePath'>): s
 // ===== 组件 =====
 
 export const FileMentionList = React.forwardRef<FileMentionRef, FileMentionListProps>(
-  function FileMentionList({ sessionEntries, workspaceEntries, pinnedEntry, onSelect, onBack, embedded = false }, ref) {
+  function FileMentionList({
+    agentEntries = EMPTY_AGENT_ENTRIES,
+    onSelectAgent,
+    sessionEntries,
+    workspaceEntries,
+    pinnedEntry,
+    onSelect,
+    onBack,
+    embedded = false,
+  }, ref) {
     // 构建一棵连续树；项目与会话来源只通过 badge 区分，不形成两个列表。
     const tree = React.useMemo(
       () => buildFileMentionTree([...workspaceEntries, ...sessionEntries]),
@@ -208,17 +228,20 @@ export const FileMentionList = React.forwardRef<FileMentionRef, FileMentionListP
       [pinnedEntry],
     )
 
-    const visibleNodes = React.useMemo(
-      () => (pinnedNode ? [pinnedNode, ...flattenVisible(treeWithState)] : flattenVisible(treeWithState)),
-      [treeWithState, pinnedNode],
-    )
+    const visibleRows = React.useMemo(() => {
+      const rows: MentionRow[] = agentEntries.map((entry) => ({ kind: 'agent', entry }))
+      if (pinnedNode) rows.unshift({ kind: 'file', node: pinnedNode })
+      for (const node of flattenVisible(treeWithState)) rows.push({ kind: 'file', node })
+      return rows
+    }, [agentEntries, pinnedNode, treeWithState])
+    const agentStartIndex = pinnedNode ? 1 : 0
 
-    const totalItems = visibleNodes.length
+    const totalItems = visibleRows.length
     const [selectedIndex, setSelectedIndex] = React.useState(0)
     const containerRef = React.useRef<HTMLDivElement>(null)
 
     React.useEffect(() => {
-      setSelectedIndex((prev) => (totalItems > 0 ? Math.min(prev, totalItems - 1) : 0))
+      setSelectedIndex((prev) => Math.max(0, Math.min(prev, totalItems - 1)))
     }, [sessionEntries, workspaceEntries, totalItems])
 
     React.useEffect(() => {
@@ -230,7 +253,8 @@ export const FileMentionList = React.forwardRef<FileMentionRef, FileMentionListP
     }, [selectedIndex, totalItems])
 
     function getNodeAt(index: number): FileTreeNode | null {
-      return visibleNodes[index] ?? null
+      const row = visibleRows[index]
+      return row?.kind === 'file' ? row.node : null
     }
 
     function toggleExpand(node: Pick<FileTreeNode, 'source' | 'treePath'>) {
@@ -277,8 +301,9 @@ export const FileMentionList = React.forwardRef<FileMentionRef, FileMentionListP
         if (event.key === 'Tab') {
           event.preventDefault()
           if (totalItems === 0) return true
-          const node = getNodeAt(selectedIndex)
-          if (node) handleSelect(node)
+          const row = visibleRows[selectedIndex]
+          if (row?.kind === 'agent') onSelectAgent?.(row.entry)
+          if (row?.kind === 'file') handleSelect(row.node)
           return true
         }
         if (event.key === 'ArrowRight') {
@@ -335,7 +360,7 @@ export const FileMentionList = React.forwardRef<FileMentionRef, FileMentionListP
         )}
       >
         <div className="flex items-center px-2.5 py-1.5 text-[11px] font-medium bg-primary/10 text-primary border-b border-border/50">
-          <span>文件</span>
+          <span>{agentEntries.length > 0 ? 'Agent 与文件' : '文件'}</span>
           <span className="ml-auto font-normal text-muted-foreground">Esc 关闭 · Tab 选中</span>
         </div>
         {pinnedNode && (
@@ -362,10 +387,33 @@ export const FileMentionList = React.forwardRef<FileMentionRef, FileMentionListP
             <span className="text-[10px] text-muted-foreground/60 truncate max-w-[140px] shrink-[2]">{pinnedNode.path}</span>
           </button>
         )}
+        {agentEntries.map((entry, index) => {
+          const rowIndex = agentStartIndex + index
+          return (
+            <button
+              key={entry.alias}
+              type="button"
+              data-mention-item=""
+              className={cn(
+                'flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-xs',
+                selectedIndex === rowIndex ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50',
+              )}
+              onMouseDown={(event) => {
+                event.preventDefault()
+                setSelectedIndex(rowIndex)
+                onSelectAgent?.(entry)
+              }}
+            >
+              <Bot className="size-3 shrink-0 text-primary" />
+              <span className="flex-1 truncate">@{entry.alias}</span>
+              <span className="max-w-[140px] truncate text-[10px] text-muted-foreground">{entry.description}</span>
+            </button>
+          )
+        })}
         <TreeNodeList
           nodes={treeWithState}
           selectedIndex={selectedIndex}
-          baseIndex={pinnedNode ? 1 : 0}
+          baseIndex={agentStartIndex + agentEntries.length}
           onSelect={handleSelect}
           onToggle={toggleExpand}
           setSelectedIndex={handleSetIndex}

@@ -30,14 +30,16 @@ export class AgentQueueCoordinator {
 
   constructor(private readonly options: AgentQueueCoordinatorOptions) {}
 
-  enqueue(input: AgentDeferredQueueMessageInput): 'started' | 'queued' {
+  enqueue(input: AgentDeferredQueueMessageInput, next = false): 'started' | 'queued' {
     if (this.dispatching.get(input.sessionId) === input.queueMessageId) return 'started'
     const queue = this.queues.get(input.sessionId) ?? []
     if (queue.some((entry) => entry.input.queueMessageId === input.queueMessageId)) {
       const runStarted = this.dispatching.get(input.sessionId) === input.queueMessageId
       return runStarted ? 'started' : 'queued'
     }
-    queue.push({ input, queuedAt: Date.now() })
+    const entry = { input, queuedAt: Date.now() }
+    if (next) queue.unshift(entry)
+    else queue.push(entry)
     this.queues.set(input.sessionId, queue)
     this.tryDispatch(input.sessionId)
     const runStarted = this.dispatching.get(input.sessionId) === input.queueMessageId

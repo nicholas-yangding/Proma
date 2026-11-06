@@ -3,7 +3,24 @@ import {
   buildQueuedMessageSendPayload,
   getQueuedMessageDisplayParts,
   parseQueuedMessageMentions,
+  queuedTextToParagraphHtml,
 } from './agent-message-queue'
+
+describe('queued Agent mentions', () => {
+  test('preserves the selected alias for dispatch, display, and draft restoration', () => {
+    const text = '请让@agent:codex 审核代码'
+    const payload = buildQueuedMessageSendPayload({ id: 'agent-1', text, createdAt: 0 })
+
+    expect(payload.rawText).toBe(text)
+    expect(payload.sdkText).toBe(text)
+    expect(getQueuedMessageDisplayParts(text)).toEqual([
+      { type: 'text', value: '请让' },
+      { type: 'reference', referenceType: 'agent', id: 'codex', label: '@codex' },
+      { type: 'text', value: ' 审核代码' },
+    ])
+    expect(queuedTextToParagraphHtml(text)).toContain('data-mention-reference-type="agent">@codex</span>')
+  })
+})
 
 describe('queued message @file mention path decoding (Agent 侧真实路径)', () => {
   test('decodes percent-encoded @file path back to the real path with spaces', () => {

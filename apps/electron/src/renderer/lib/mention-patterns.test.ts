@@ -2,6 +2,13 @@ import { describe, expect, test } from 'bun:test'
 import { createMentionPattern } from './mention-patterns'
 
 describe('mention token boundaries', () => {
+  test('renders selected Agent aliases without treating file paths as aliases', () => {
+    const text = '请让@agent:codex审核并交给 @agent:glm-5。路径 /@agent:codex 和 @agent:codex.md'
+    const aliases = Array.from(text.matchAll(createMentionPattern()), (match) => match.groups?.agent)
+
+    expect(aliases).toEqual(['codex', 'glm-5'])
+  })
+
   test('stops a file chip before adjacent CJK text', () => {
     const text = '@file:Screenshot%202026-08-24%20at%2014.17.47.png还是做一个单独渲染的内容吧'
     const matches = Array.from(text.matchAll(createMentionPattern()))

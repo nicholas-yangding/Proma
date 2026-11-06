@@ -5,8 +5,10 @@
  * 存储在 ~/.proma/settings.json
  */
 
-import { readFileSync, writeFileSync, existsSync } from 'node:fs'
+import { readFileSync, existsSync } from 'node:fs'
 import { getSettingsPath } from './config-paths'
+import { normalizeAgentDelegationProfiles } from './agent-delegation-profiles'
+import { writeJsonFileAtomic } from './safe-file'
 import { DEFAULT_THEME_MODE, normalizeProductivityToolsSettings } from '../../types'
 import type { AgentIslandSettings, AppSettings } from '../../types'
 import { getTerminalProfilesForPlatform, isTerminalProfile } from '@proma/shared'
@@ -84,6 +86,9 @@ export function getSettings(): AppSettings {
         ? sanitizeWindowsTerminalProfile(settings.lastWindowsTerminalProfile ?? legacyLastTerminalProfile)
         : undefined,
       agentThinking: settings.agentThinking ?? { type: 'adaptive' },
+      agentDelegationProfiles: settings.agentDelegationProfiles === undefined
+        ? undefined
+        : normalizeAgentDelegationProfiles(settings.agentDelegationProfiles),
       // 缺省 true：老配置文件未写该字段时保持推广默认开启
       gitAttributionEnabled: settings.gitAttributionEnabled ?? true,
       // 缺省全部开启：老配置文件不会因升级意外隐藏生产力工具。
@@ -120,6 +125,9 @@ export function updateSettings(updates: Partial<AppSettings>): AppSettings {
   const updated: AppSettings = {
     ...current,
     ...updates,
+    agentDelegationProfiles: updates.agentDelegationProfiles === undefined
+      ? current.agentDelegationProfiles
+      : normalizeAgentDelegationProfiles(updates.agentDelegationProfiles, true),
     // 仅保留 macOS 原生 Island 开关，避免旧非原生 surface 字段被继续回写。
     agentIsland: updates.agentIsland === undefined
       ? sanitizeAgentIslandSettings(current.agentIsland)
@@ -131,7 +139,7 @@ export function updateSettings(updates: Partial<AppSettings>): AppSettings {
   const filePath = getSettingsPath()
 
   try {
-    writeFileSync(filePath, JSON.stringify(updated, null, 2), 'utf-8')
+    writeJsonFileAtomic(filePath, updated)
     console.log('[设置] 已更新 keys:', Object.keys(updates).join(', '))
   } catch (error) {
     console.error('[设置] 写入失败:', error)

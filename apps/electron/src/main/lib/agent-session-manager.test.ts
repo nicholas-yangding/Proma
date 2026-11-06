@@ -601,3 +601,251 @@ describe('Agent 会话删除墓碑', () => {
     expect(existsSync(join(tempHome, '.proma', 'agent-sessions', `${id}.jsonl`))).toBe(false)
   })
 })
+
+describe('Agent 命名委派', () => {
+  let selfChannelId: string
+  beforeAll(async () => {
+    const { createChannel } = await import('./channel-manager')
+    selfChannelId = createChannel({
+      name: '测试主模型',
+      provider: 'openai',
+      baseUrl: 'https://example.invalid',
+      apiKey: '',
+      models: [{ id: 'deepseek-test', name: 'DeepSeek Test', enabled: true }],
+      enabled: true,
+    }).id
+  })
+
+  test('Given 跨渠道别名和 @self When 同轮调用并重试 Then 保留目标配置和原来的子会话', async () => {
+    const { createChannel } = await import('./channel-manager')
+    const { runMentionedAgentDelegations } = await import('./agent-collaboration-tools')
+    const { setHeadlessAgentRunner } = await import('./agent-headless-runner-registry')
+    const codex = createChannel({
+      name: '测试 Codex',
+      provider: 'openai-codex',
+      baseUrl: 'https://example.invalid',
+      apiKey: '',
+      models: [{ id: 'gpt-test', name: 'GPT Test', enabled: true }],
+      enabled: true,
+    })
+    const parent = manager.createAgentSession('主 Agent', selfChannelId, 'workspace-a', 'deepseek-test')
+    const activeWorktree = {
+      path: '/project/worktrees/feature',
+      mainRepoRoot: '/project',
+      branch: 'feature',
+      selectedAt: 1,
+    }
+    manager.updateAgentSessionMeta(parent.id, { activeWorktree })
+    const ctx = {
+      sessionId: parent.id,
+      workspaceId: parent.workspaceId,
+      channelId: selfChannelId,
+      modelId: 'deepseek-test',
+      thinkingLevel: 'medium' as const,
+      agentDelegationProfiles: [{ alias: 'codex', channelId: codex.id, modelId: 'gpt-test', thinkingLevel: 'high' as const }],
+    }
+    const routedChildren: string[] = []
+    const finishChildren = Promise.withResolvers<void>()
+    setHeadlessAgentRunner(async (input, callbacks) => {
+      routedChildren.push(`${input.channelId}/${input.modelId}`)
+      expect(input.userMessage).toContain('分析方案')
+      await finishChildren.promise
+      callbacks.onComplete([{ id: input.sessionId, role: 'assistant', content: `来自 ${input.modelId}`, createdAt: 1 }])
+    })
+
+    const running = runMentionedAgentDelegations(
+      ctx, ['codex', 'self', 'missing', 'CODEX'], '分析方案', new AbortController().signal, 'same-user-message',
+    )
+    expect(routedChildren).toEqual([`${codex.id}/gpt-test`, `${selfChannelId}/deepseek-test`])
+    finishChildren.resolve()
+    const results = await running
+    expect(results).toMatchObject([
+      { alias: 'codex', status: 'completed', modelId: 'gpt-test', thinkingLevel: 'high', resultSummary: '来自 gpt-test' },
+      { alias: 'self', status: 'completed', modelId: 'deepseek-test', thinkingLevel: 'medium' },
+      { alias: 'missing', status: 'failed' },
+    ])
+    expect(manager.listAgentSessions().filter((session) => session.parentSessionId === parent.id))
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          channelId: codex.id,
+          delegationAlias: 'codex',
+          delegationDepth: 1,
+          delegationReadOnly: true,
+          activeWorktree,
+          sourceDelegationUserMessageUuid: 'same-user-message',
+        }),
+      ]))
+    const replay = await runMentionedAgentDelegations(
+      ctx, ['codex', 'self'], '分析方案', new AbortController().signal, 'same-user-message',
+    )
+    expect(replay).toEqual(results.slice(0, 2))
+    expect(routedChildren).toHaveLength(2)
+  })
+
+  test('Given 主 Agent 的可用别名 When 通过 Pi 工具委派 Then 使用目标渠道且允许覆盖思考强度', async () => {
+    const { createChannel, updateChannel } = await import('./channel-manager')
+    const { buildPiCollaborationTools } = await import('./agent-collaboration-tools')
+    const { setHeadlessAgentRunner } = await import('./agent-headless-runner-registry')
+    const createTestChannel = (name: string, modelId: string) => createChannel({
+      name,
+      provider: 'openai',
+      baseUrl: 'https://example.invalid',
+      apiKey: '',
+      models: [{ id: modelId, name: modelId, enabled: true }],
+      enabled: true,
+    })
+    const parentChannel = createTestChannel('自主调度主渠道', 'parent-model')
+    const targetChannel = createTestChannel('自主调度目标渠道', 'target-model')
+    const parent = manager.createAgentSession('自主调度主 Agent', parentChannel.id, 'workspace-a', 'parent-model')
+    let profileChannelId = targetChannel.id
+    let profileModelId = 'target-model'
+    let planMode = false
+    const tools = buildPiCollaborationTools({ defineTool: (definition) => definition }, {
+      sessionId: parent.id,
+      workspaceId: parent.workspaceId,
+      channelId: parentChannel.id,
+      modelId: parent.modelId,
+      getAgentDelegationProfiles: () => [{
+        alias: 'worker', channelId: profileChannelId, modelId: profileModelId, thinkingLevel: 'high',
+      }],
+      getPermissionMode: () => planMode ? 'plan' : 'bypassPermissions',
+    })
+    let toolCallCount = 0
+    const runTool = async (name: string, args: unknown): Promise<unknown> => {
+      const tool = tools.find((candidate) => candidate && typeof candidate === 'object'
+        && 'name' in candidate && candidate.name === `mcp__collaboration__${name}`)
+      if (!tool || typeof tool !== 'object' || !('execute' in tool) || typeof tool.execute !== 'function') {
+        throw new Error(`未注册工具 ${name}`)
+      }
+      const result: unknown = await tool.execute(`${name}-${++toolCallCount}`, args)
+      if (!result || typeof result !== 'object' || !('details' in result)) {
+        throw new Error(`工具未返回结果 ${name}`)
+      }
+      return result.details
+    }
+    setHeadlessAgentRunner(async (input, callbacks) => {
+      expect(input.channelId).toBe(targetChannel.id)
+      expect(input.modelId).toBe('target-model')
+      callbacks.onComplete([{ id: input.sessionId, role: 'assistant', content: '独立结果', createdAt: 1 }])
+    })
+
+    const catalog = await runTool('list_available_agent_models', {})
+    expect(catalog).toMatchObject({
+      delegationAliases: expect.arrayContaining([
+        { alias: 'worker', channelId: targetChannel.id, modelId: 'target-model', thinkingLevel: 'high' },
+      ]),
+    })
+    await expect(runTool('delegate_agent', { alias: 'worker', modelId: 'target-model', task: '分析方案' }))
+      .rejects.toThrow('不能同时指定 modelId')
+    const result = await runTool('delegate_agent', { alias: 'worker', thinkingLevel: 'low', task: '分析方案' })
+    expect(result).toMatchObject({
+      delegation: { alias: 'worker', modelId: 'target-model', thinkingLevel: 'low', resultSummary: '独立结果' },
+    })
+    const children = manager.listAgentSessions().filter((session) => session.parentSessionId === parent.id)
+    expect(children).toMatchObject([{ channelId: targetChannel.id, modelId: 'target-model', reasoningLevel: 'low' }])
+
+    planMode = true
+    const planCatalog = await runTool('list_available_agent_models', {})
+    expect(planCatalog).toMatchObject({ delegationAliases: [] })
+
+    planMode = false
+    updateChannel(targetChannel.id, { enabled: false })
+    const unavailableCatalog = await runTool('list_available_agent_models', {})
+    expect(unavailableCatalog).toMatchObject({ delegationAliases: [{ alias: 'self' }] })
+
+    profileChannelId = parentChannel.id
+    profileModelId = 'parent-model'
+    await expect(runTool('continue_delegation', {
+      delegationId: children[0]?.sourceDelegationId,
+      message: '继续分析',
+    })).rejects.toThrow('渠道或模型已变更')
+
+    updateChannel(parentChannel.id, { enabled: false })
+    await expect(runTool('delegate_agent', { alias: 'self', task: '分析方案' })).rejects.toThrow('未启用')
+  })
+
+  test('Given 只有磁盘上的中断委派 When 重试同一条消息 Then 回报中断并复用原会话', async () => {
+    const { runMentionedAgentDelegations } = await import('./agent-collaboration-tools')
+    const { setHeadlessAgentRunner } = await import('./agent-headless-runner-registry')
+    const parent = manager.createAgentSession('重试主 Agent', selfChannelId, 'workspace-a', 'deepseek-test')
+    const child = manager.createAgentSession('@self', selfChannelId, 'workspace-a', 'deepseek-test', undefined, undefined, undefined, {
+      parentSessionId: parent.id,
+      sourceDelegationId: 'previous-process-delegation',
+      delegationAlias: 'self',
+      delegationStatus: 'running',
+      sourceDelegationUserMessageUuid: 'previous-process-user-message',
+    })
+    const runner = mock(async () => {})
+    setHeadlessAgentRunner(runner)
+
+    const results = await runMentionedAgentDelegations(
+      { sessionId: parent.id, channelId: selfChannelId, modelId: parent.modelId, workspaceId: parent.workspaceId },
+      ['self'], '重试', new AbortController().signal, 'previous-process-user-message',
+    )
+
+    expect(results).toMatchObject([{ alias: 'self', status: 'interrupted', childSessionId: child.id }])
+    expect(runner).toHaveBeenCalledTimes(0)
+  })
+
+  test('Given 子会话正在执行 When 停止主会话 Then 停止并记录子会话取消', async () => {
+    const { runMentionedAgentDelegations } = await import('./agent-collaboration-tools')
+    const { setAgentStopper, setHeadlessAgentRunner } = await import('./agent-headless-runner-registry')
+    const parent = manager.createAgentSession('可取消主 Agent', selfChannelId, 'workspace-a', 'deepseek-test')
+    const pending = Promise.withResolvers<void>()
+    const stopChild = mock((_sessionId: string) => pending.resolve())
+    setHeadlessAgentRunner(async (_input, callbacks) => {
+      await pending.promise
+      callbacks.onComplete()
+    })
+    setAgentStopper(stopChild)
+    const controller = new AbortController()
+    const running = runMentionedAgentDelegations(
+      { sessionId: parent.id, channelId: selfChannelId, modelId: parent.modelId, workspaceId: parent.workspaceId },
+      ['self'], '等待取消', controller.signal,
+    )
+    controller.abort()
+
+    const [result] = await running
+    expect(result).toMatchObject({ alias: 'self', status: 'cancelled' })
+    expect(stopChild).toHaveBeenCalledWith(result?.childSessionId)
+    expect(manager.getAgentSessionMeta(result?.childSessionId ?? '')?.delegationStatus).toBe('cancelled')
+  })
+
+  test('Given 子会话在自己的窗口中被停止 When 等待委派 Then 不把部分输出当作完成结果', async () => {
+    const { runMentionedAgentDelegations } = await import('./agent-collaboration-tools')
+    const { setHeadlessAgentRunner } = await import('./agent-headless-runner-registry')
+    const parent = manager.createAgentSession('手动停止子会话', selfChannelId, 'workspace-a', 'deepseek-test')
+    setHeadlessAgentRunner(async (input, callbacks) => {
+      callbacks.onComplete(
+        [{ id: input.sessionId, role: 'assistant', content: '部分结果', createdAt: 1 }],
+        { stoppedByUser: true },
+      )
+    })
+
+    const [result] = await runMentionedAgentDelegations(
+      { sessionId: parent.id, channelId: selfChannelId, modelId: parent.modelId, workspaceId: parent.workspaceId },
+      ['self'], '等待子会话', new AbortController().signal,
+    )
+    expect(result).toMatchObject({ alias: 'self', status: 'cancelled' })
+    expect(result?.resultSummary).toBeUndefined()
+  })
+
+  test('Given 主 Agent 在计划模式 When 尝试命名委派 Then 不启动有执行权限的子会话', async () => {
+    const { runMentionedAgentDelegations } = await import('./agent-collaboration-tools')
+    const { setHeadlessAgentRunner } = await import('./agent-headless-runner-registry')
+    const parent = manager.createAgentSession('计划主 Agent', selfChannelId, 'workspace-a', 'deepseek-test')
+    const runner = mock(async () => {})
+    setHeadlessAgentRunner(runner)
+
+    const results = await runMentionedAgentDelegations({
+      sessionId: parent.id,
+      channelId: selfChannelId,
+      workspaceId: parent.workspaceId,
+      getPermissionMode: () => 'plan',
+    }, ['self'], '计划阶段任务', new AbortController().signal)
+
+    expect(results).toMatchObject([{ alias: 'self', status: 'failed', error: expect.stringContaining('计划模式') }])
+    expect(runner).toHaveBeenCalledTimes(0)
+    expect(manager.listAgentSessions().filter((session) => session.parentSessionId === parent.id)).toEqual([])
+  })
+})

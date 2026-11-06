@@ -650,6 +650,7 @@ export function htmlToMarkdown(
         if (dataType === 'mention') {
           let serializedMention: string
           if (agentHistoryQuote) serializedMention = `&quote:${agentHistoryQuote}`
+          else if (referenceType === 'agent') serializedMention = `@agent:${dataId}`
           else if (referenceType === 'todo') serializedMention = serializeNamedMention('&todo', dataId, dataLabel)
           else if (referenceType === 'calendar_event') serializedMention = serializeNamedMention('&calendar_event', dataId, dataLabel)
           else if (suggestionChar === '/') serializedMention = `/skill:${dataId}`

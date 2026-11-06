@@ -914,6 +914,7 @@ export function AgentView({ sessionId, embedded = false }: AgentViewProps): Reac
 
   // 获取工作区共享文件目录路径（@ 引用时需要搜索）
   const currentWorkspace = workspaces.find((workspace) => workspace.id === currentWorkspaceId)
+  const canMentionAgent = !!currentWorkspace && !sessionMeta?.parentSessionId && !sessionMeta?.delegationDepth && !isPermissionPlanMode
   const workspaceSlug = currentWorkspace?.slug ?? null
   const projectRootPath = currentWorkspace?.projectRootPath ?? null
   React.useEffect(() => {
@@ -1095,7 +1096,8 @@ export function AgentView({ sessionId, embedded = false }: AgentViewProps): Reac
     }
 
     // 主进程已接管消息但仍在等待；恢复/保留队列投影，等待 started 事件消费。
-    setQueuedMessages((prev) => prev.some((item) => item.id === message.id) ? prev : [...prev, message])
+    setQueuedMessages((prev) => prev.some((item) => item.id === message.id) ? prev : [message, ...prev])
+    toast.info('已安排到下一轮')
   }, [
     agentChannelId,
     agentModelId,
@@ -2432,8 +2434,11 @@ export function AgentView({ sessionId, embedded = false }: AgentViewProps): Reac
   const handleRetry = React.useCallback((retryOfErrorUuid?: string): void => {
     if (!agentChannelId || streaming) return
 
-    // 找到最后一条用户消息
-    const lastUserRawMessage = [...persistedSDKMessages]
+    const errorIndex = retryOfErrorUuid
+      ? persistedSDKMessages.findIndex((message) => 'uuid' in message && message.uuid === retryOfErrorUuid)
+      : -1
+    const retryHistory = errorIndex >= 0 ? persistedSDKMessages.slice(0, errorIndex) : [...persistedSDKMessages]
+    const lastUserRawMessage = retryHistory
       .reverse()
       .map(getUserTextFromSDKMessage)
       .find((text): text is string => text !== null)
@@ -3136,8 +3141,8 @@ export function AgentView({ sessionId, embedded = false }: AgentViewProps): Reac
               placeholder={
                 agentChannelId && hasAvailableModel
                   ? sendWithCmdEnter
-                    ? '输入消息...（@ 引用文件，/ 调用 Skill，# 使用 MCP，& 引用会话，～ 引用待办/日程；⌘/Ctrl+Enter 发送）'
-                    : '输入消息...（@ 引用文件，/ 调用 Skill，# 使用 MCP，& 引用会话，～ 引用待办/日程；Enter 发送）'
+                    ? `输入消息...（@ ${canMentionAgent ? '委派 Agent 或' : ''}引用文件，/ 调用 Skill，# 使用 MCP，& 引用会话，～ 引用待办/日程；⌘/Ctrl+Enter 发送）`
+                    : `输入消息...（@ ${canMentionAgent ? '委派 Agent 或' : ''}引用文件，/ 调用 Skill，# 使用 MCP，& 引用会话，～ 引用待办/日程；Enter 发送）`
                   : !agentChannelId
                     ? '请先选择模型'
                     : '暂无可用模型，请先在设置中启用渠道'
@@ -3146,6 +3151,7 @@ export function AgentView({ sessionId, embedded = false }: AgentViewProps): Reac
               autoFocusTrigger={sessionId}
               collapsible
               enableMentions
+              enableAgentMentions={canMentionAgent}
               workspacePath={sessionPath}
               workspaceSlug={workspaceSlug}
               attachedDirs={workspaceMentionPaths}

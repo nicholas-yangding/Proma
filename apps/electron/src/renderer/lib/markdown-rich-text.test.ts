@@ -165,6 +165,17 @@ describe('markdownToHtml rich preview blocks', () => {
 })
 
 describe('Agent mention serialization', () => {
+  test('serializes an Agent chip without changing a file chip in the same message', () => {
+    const markdown = withHtmlDocument(() => htmlToMarkdown([
+      '<p>请让',
+      '<span data-type="mention" data-id="codex" data-label="codex" data-mention-reference-type="agent">@codex</span>',
+      '检查 <span data-type="mention" data-id="src/index.ts">index.ts</span>。',
+      '</p>',
+    ].join('')))
+
+    expect(markdown).toBe('请让@agent:codex 检查 @file:src%2Findex.ts 。')
+  })
+
   test('preserves the existing file, Skill, MCP, and session reference protocols', () => {
     const markdown = withHtmlDocument(() => htmlToMarkdown([
       '<p>',

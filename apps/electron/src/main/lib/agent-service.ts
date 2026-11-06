@@ -32,7 +32,6 @@ import type {
   AgentQueuedMessageControlInput,
   AgentMoveQueuedMessageInput,
   PromaPermissionMode,
-  AgentExternalRunSource,
   AgentActiveSessionSnapshot,
   AgentQueuedMessageSnapshot,
   AgentMessage,
@@ -45,7 +44,7 @@ import { getAgentSessionWorkspacePath } from './config-paths'
 import { getAgentWorkspaceBySlug, getProjectFilesPath } from './agent-workspace-manager'
 import { getLocalProjectRootStatus } from './project-root-health'
 import { getAgentSessionMeta, markAgentSessionDeleting, updateAgentSessionMeta } from './agent-session-manager'
-import { setAgentStopper, setHeadlessAgentRunner } from './agent-headless-runner-registry'
+import { setAgentStopper, setHeadlessAgentRunner, type HeadlessAgentRunCallbacks } from './agent-headless-runner-registry'
 import { getHeadlessAgentRunTarget } from './agent-headless-run-target'
 import { sendAgentStreamComplete } from './agent-completion-payload'
 import { AgentStreamForwarder } from './agent-stream-forwarder'
@@ -53,6 +52,8 @@ import { AgentStreamRouteRegistry } from './agent-stream-route-registry'
 import { AgentQueueCoordinator } from './agent-queue-coordinator'
 import { isStaleActiveQueueError } from './agent-queue-routing'
 import { shouldStopBeforeAgentRun } from './agent-stop-policy'
+import { parseAgentDelegationMentions } from './agent-delegation-profiles'
+import { getSettings } from './settings-service'
 
 // ===== 实例创建 =====
 
@@ -118,12 +119,12 @@ function registerWebContents(sessionId: string, wc: WebContents) {
  * 排队或中断消息不创建新 run；若它们调用 bind()，旧 run 的终态将因 owner
  * 不匹配而无法投递，renderer 会永久保留 running 状态。
  */
-function rebindWebContents(sessionId: string, wc: WebContents) {
+function rebindWebContents(sessionId: string, wc: WebContents, wakeQueue = true) {
   const previousWebContents = streamRoutes.get(sessionId)?.target
   if (previousWebContents && previousWebContents !== wc) streamForwarder.clear(sessionId)
   const route = streamRoutes.rebind(sessionId, wc)
   attachWebContentsCleanup(wc)
-  agentQueueCoordinator.onTargetAvailable(sessionId)
+  if (wakeQueue) agentQueueCoordinator.onTargetAvailable(sessionId)
   return route
 }
 
@@ -391,13 +392,7 @@ export async function runAgent(
  */
 export async function runAgentHeadless(
   input: AgentSendInput,
-  callbacks: {
-    onError: (error: string) => void
-    onComplete: (messages?: AgentMessage[]) => void
-    onTitleUpdated: (title: string) => void
-    source?: AgentExternalRunSource
-    originSessionId?: string
-  },
+  callbacks: HeadlessAgentRunCallbacks,
   extensions?: AgentRunExtensions,
 ): Promise<void> {
   // 委派子会话优先回到父会话所在 renderer，外部无界面运行才回退任意主窗口。
@@ -436,7 +431,7 @@ export async function runAgentHeadless(
         }
       },
       onComplete: (messages, opts) => {
-        callbacks.onComplete(messages)
+        callbacks.onComplete(messages, opts)
         publishRunStopped(runInput.sessionId, opts?.stoppedByUser, opts?.startedAt, opts?.runGeneration)
         eventBus.emit(runInput.sessionId, {
           kind: 'proma_event',
@@ -570,7 +565,7 @@ export async function stopAgentAndDrain(sessionId: string): Promise<void> {
 }
 
 setHeadlessAgentRunner(runAgentHeadless)
-setAgentStopper(stopAgent)
+setAgentStopper((sessionId) => { void orchestrator.stop(sessionId, true) })
 
 /**
  * 快照回退：回退到指定消息点，恢复文件 + 截断对话
@@ -651,9 +646,15 @@ export async function submitOrEnqueueAgentMessage(
   input: AgentSubmitOrEnqueueInput,
   webContents: WebContents,
 ): Promise<AgentSubmitOrEnqueueResult> {
-  rebindWebContents(input.sessionId, webContents)
+  rebindWebContents(input.sessionId, webContents, false)
 
-  if (input.dispatch === 'now' && orchestrator.isActive(input.sessionId)) {
+  const message = input.rawUserMessage ?? input.userMessage
+  const nextTurn = input.dispatch === 'now' && (
+    orchestrator.isRunningMentionedDelegations(input.sessionId)
+    || (message.includes('@')
+      && parseAgentDelegationMentions(message, getSettings().agentDelegationProfiles ?? []).aliases.length > 0)
+  )
+  if (input.dispatch === 'now' && !nextTurn && orchestrator.isActive(input.sessionId)) {
     try {
       await queueAgentMessage({
         sessionId: input.sessionId,
@@ -676,7 +677,7 @@ export async function submitOrEnqueueAgentMessage(
     }
   }
 
-  const disposition = agentQueueCoordinator.enqueue(input)
+  const disposition = agentQueueCoordinator.enqueue(input, input.dispatch === 'now')
   return { disposition: disposition === 'started' ? 'started' : 'queued' }
 }
 

@@ -4,6 +4,7 @@ import {
   withCodexFastModeServiceTier,
 } from './pi-codex-request-settings'
 import { injectOpenAIReasoningLevel } from './pi-openai-reasoning-request-settings'
+import { resolvePiReasoningCapability } from './pi-model-registry'
 import { resolveReasoningProfile } from '@proma/shared'
 
 describe('Pi Codex request settings', () => {
@@ -12,6 +13,30 @@ describe('Pi Codex request settings', () => {
     expect(resolveReasoningProfile({ modelId: 'gpt-5.6-terra', transport: 'openai-responses' })?.id).toBe('openai-reasoning-max')
     expect(resolveReasoningProfile({ modelId: 'gpt-4o', transport: 'openai-responses' })).toBeUndefined()
     expect(resolveReasoningProfile({ modelId: 'gpt-5-chat-latest', transport: 'openai-responses' })).toBeUndefined()
+  })
+
+  test('选择 Responses 渠道的 GPT-6.1 Sol 时可选低到最大档，默认中档', async () => {
+    expect(await resolvePiReasoningCapability('openai-responses', 'gpt-6.1-sol')).toMatchObject({
+      levels: ['low', 'medium', 'high', 'xhigh', 'max'],
+      defaultLevel: 'medium',
+    })
+    expect(injectOpenAIReasoningLevel({ model: 'gpt-6.1-sol' }, { thinkingLevel: 'max' })).toMatchObject({
+      reasoning: { effort: 'max' },
+    })
+    expect(injectOpenAIReasoningLevel({ model: 'gpt-6.1-sol' }, { thinkingLevel: 'off' })).toMatchObject({
+      reasoning: { effort: 'low' },
+    })
+  })
+
+  test('选择 Responses 渠道的 GPT-6.1 Terra 时可关闭推理，也可选最大档', async () => {
+    expect(await resolvePiReasoningCapability('openai-responses', 'gpt-6.1-terra')).toMatchObject({
+      levels: ['off', 'low', 'medium', 'high', 'xhigh', 'max'],
+      defaultLevel: 'medium',
+    })
+    expect(injectOpenAIReasoningLevel({ model: 'gpt-6.1-terra' }, { thinkingLevel: 'off' })).toMatchObject({
+      reasoning: { effort: 'none' },
+    })
+    expect(resolveReasoningProfile({ modelId: 'gpt-6.1-terra', transport: 'anthropic-messages' })).toBeUndefined()
   })
 
   test.each(['gpt-5.4', 'gpt-5.5', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'])(

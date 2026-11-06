@@ -6,6 +6,8 @@
  */
 
 import { randomUUID } from 'node:crypto'
+import type { ToolDefinition } from '@earendil-works/pi-coding-agent'
+import type { TSchema } from 'typebox'
 import type {
   AgentDelegationRole,
   AgentDelegationStatus,
@@ -18,6 +20,7 @@ import type {
   PromaPermissionMode,
   SDKMessage,
 } from '@proma/shared'
+import { CURRENT_AGENT_DELEGATION_ALIAS, type AgentDelegationProfile } from '../../types/settings'
 import {
   createAgentSession,
   getAgentSessionMeta,
@@ -41,14 +44,19 @@ import {
 } from './agent-collaboration-utils'
 import { assertEnabledModelForChannel, listEnabledAgentModelsForChannel } from './agent-model-selection'
 import { serializePiToolResultPayload } from './adapters/pi-tool-result-json'
+import { getChannelById } from './channel-manager'
 
-interface CollaborationToolContext {
+export interface CollaborationToolContext {
   sessionId: string
   channelId: string
   modelId?: string
+  thinkingLevel?: AgentThinkingLevel
+  agentDelegationProfiles?: readonly AgentDelegationProfile[]
+  getAgentDelegationProfiles?: () => readonly AgentDelegationProfile[]
   workspaceId?: string
   permissionMode?: PromaPermissionMode
-  triggeredBy?: 'user' | 'automation' | 'delegation'
+  getPermissionMode?: () => PromaPermissionMode | undefined
+  triggeredBy?: 'user' | 'automation' | 'delegation' | 'external'
 }
 
 interface CollaborationToolResult extends Record<string, unknown> {
@@ -61,6 +69,7 @@ interface DelegationRecord {
   childSessionId: string
   channelId: string
   modelId?: string
+  alias?: string
   title: string
   thinkingLevel?: AgentThinkingLevel
   role: AgentDelegationRole
@@ -77,6 +86,7 @@ interface DelegationRecord {
 
 
 const RESULT_SUMMARY_CHAR_LIMIT = 50_000
+const MENTIONED_RESULT_SUMMARY_CHAR_LIMIT = 12_000
 const DELEGATION_GOAL_CHAR_LIMIT = 1_000
 /** live Map 中保留的已结束委派上限，超出时按完成时间清理最老的（持久化仍可回查） */
 const MAX_RETAINED_FINISHED_DELEGATIONS = 200
@@ -236,8 +246,16 @@ interface DelegateAgentArgs {
   expectedOutput?: string
   permissionMode?: PromaPermissionMode
   modelId?: string
+  alias?: string
   /** 子会话的目标思考强度；未传入时保持新会话默认值。 */
   thinkingLevel?: AgentThinkingLevel
+}
+
+interface DelegationTarget {
+  channelId: string
+  modelId?: string
+  thinkingLevel?: AgentThinkingLevel
+  alias?: string
 }
 
 interface StartDelegationResult {
@@ -366,8 +384,13 @@ function markDelegationFinished(
   record.completedAt = Date.now()
   record.error = fields.error
   record.resultSummary = fields.resultSummary
-  updateAgentSessionMeta(record.childSessionId, { delegationStatus: status })
-  record.resolveCompletion()
+  try {
+    updateAgentSessionMeta(record.childSessionId, { delegationStatus: status })
+  } catch (error) {
+    console.warn('[协作工具] 未能持久化委派状态', record.delegationId, error)
+  } finally {
+    record.resolveCompletion()
+  }
 }
 
 function getDelegationSummary(record: DelegationRecord): Record<string, unknown> {
@@ -377,6 +400,7 @@ function getDelegationSummary(record: DelegationRecord): Record<string, unknown>
     childSessionId: record.childSessionId,
     channelId: record.channelId,
     modelId: record.modelId,
+    alias: record.alias,
     ...getThinkingLevelSummary(getAgentSessionMeta(record.childSessionId)?.reasoningLevel ?? record.thinkingLevel),
     title: record.title,
     role: record.role,
@@ -405,6 +429,7 @@ function listKnownDelegations(parentSessionId: string): Array<Record<string, unk
       childSessionId: session.id,
       channelId: session.channelId,
       modelId: session.modelId,
+      alias: session.delegationAlias,
       ...getThinkingLevelSummary(session.reasoningLevel),
       title: session.title,
       role: session.delegationRole,
@@ -442,6 +467,7 @@ function getDelegationResult(parentSessionId: string, delegationId: string): Rec
     childSessionId: session.id,
     channelId: session.channelId,
     modelId: session.modelId,
+    alias: session.delegationAlias,
     ...getThinkingLevelSummary(session.reasoningLevel),
     title: session.title,
     role: session.delegationRole,
@@ -529,6 +555,7 @@ function recoverDelegationRecordFromSession(
     ...state,
     channelId: session.channelId ?? fallbackChannelId,
     modelId: session.modelId ?? fallbackModelId,
+    alias: session.delegationAlias,
     thinkingLevel: session.reasoningLevel,
     ...completionHandle,
   }
@@ -631,25 +658,131 @@ function getCurrentParentPermissionMode(
   return latestParent?.permissionMode ?? parent?.permissionMode ?? fallback
 }
 
+function supportsDelegationAliases(ctx: CollaborationToolContext): boolean {
+  return ctx.triggeredBy === undefined || ctx.triggeredBy === 'user'
+}
+
+function getAliasPermissionMode(ctx: CollaborationToolContext, parent: AgentSessionMeta | undefined): PromaPermissionMode | undefined {
+  return ctx.getPermissionMode?.() ?? ctx.permissionMode ?? parent?.permissionMode
+}
+
+function getDelegationProfiles(ctx: CollaborationToolContext): readonly AgentDelegationProfile[] {
+  return ctx.getAgentDelegationProfiles?.() ?? ctx.agentDelegationProfiles ?? []
+}
+
+export function listAvailableAgentDelegationProfiles(
+  profiles: readonly AgentDelegationProfile[],
+): AgentDelegationProfile[] {
+  return profiles.filter((profile) => {
+    const channel = getChannelById(profile.channelId)
+    return channel?.enabled && channel.models.some((model) => model.enabled && model.id === profile.modelId)
+  })
+}
+
+function assertAliasDelegationAllowed(
+  ctx: CollaborationToolContext,
+  parent: AgentSessionMeta | undefined,
+): void {
+  if (!supportsDelegationAliases(ctx)) {
+    throw new Error('命名 Agent 委派仅支持桌面会话')
+  }
+  if (getAliasPermissionMode(ctx, parent) === 'plan') {
+    throw new Error('计划模式下不能执行命名 Agent 委派，请在计划获批后再执行')
+  }
+}
+
+function resolveDelegationTarget(
+  ctx: CollaborationToolContext,
+  parent: AgentSessionMeta | undefined,
+  args: DelegateAgentArgs,
+): DelegationTarget {
+  const thinkingLevel = assertThinkingLevel(args.thinkingLevel)
+  if (args.alias === undefined) {
+    return {
+      channelId: ctx.channelId,
+      modelId: args.modelId === undefined
+        ? ctx.modelId?.trim() || undefined
+        : assertEnabledModelForChannel({
+            channelId: ctx.channelId,
+            modelId: args.modelId,
+            purpose: '创建协作子会话',
+          }),
+      thinkingLevel,
+    }
+  }
+
+  assertAliasDelegationAllowed(ctx, parent)
+  if (args.modelId !== undefined) {
+    throw new Error('命名 Agent 委派不能同时指定 modelId')
+  }
+  const alias = args.alias.trim().toLowerCase()
+  if (alias === CURRENT_AGENT_DELEGATION_ALIAS) {
+    return {
+      alias,
+      channelId: ctx.channelId,
+      modelId: assertEnabledModelForChannel({
+        channelId: ctx.channelId,
+        modelId: assertNonBlank(ctx.modelId, '当前模型'),
+        purpose: '委派 @self',
+      }),
+      thinkingLevel: thinkingLevel ?? ctx.thinkingLevel ?? parent?.reasoningLevel,
+    }
+  }
+  const profile = getDelegationProfiles(ctx).find((candidate) => candidate.alias === alias)
+  if (!profile) {
+    throw new Error(`未配置 Agent 别名 @${alias}`)
+  }
+  return {
+    alias,
+    channelId: profile.channelId,
+    modelId: assertEnabledModelForChannel({
+      channelId: profile.channelId,
+      modelId: profile.modelId,
+      purpose: `委派 @${alias}`,
+    }),
+    thinkingLevel: thinkingLevel ?? profile.thinkingLevel,
+  }
+}
+
 function getAvailableAgentModels(ctx: CollaborationToolContext): Record<string, unknown> {
   const currentModelId = ctx.modelId?.trim() || undefined
   const summary = listEnabledAgentModelsForChannel(ctx.channelId, '读取协作子会话可用模型')
+  const currentModelAvailable = summary.models.some((model) => model.id === currentModelId)
+  const self = {
+    alias: CURRENT_AGENT_DELEGATION_ALIAS,
+    channelId: ctx.channelId,
+    modelId: currentModelId,
+    thinkingLevel: ctx.thinkingLevel,
+    description: '复用当前主会话的渠道、模型和思考强度，独立执行任务',
+  }
+  const delegationAliases = supportsDelegationAliases(ctx)
+    && getAliasPermissionMode(ctx, getAgentSessionMeta(ctx.sessionId)) !== 'plan'
+    ? [...(currentModelAvailable ? [self] : []), ...listAvailableAgentDelegationProfiles(getDelegationProfiles(ctx))]
+    : []
   return {
     channelId: summary.channelId,
     channelName: summary.channelName,
     provider: summary.provider,
     currentModelId,
-    currentModelAvailable: currentModelId
-      ? summary.models.some((model) => model.id === currentModelId)
-      : false,
+    currentModelAvailable,
     models: summary.models.map((model) => ({
       ...model,
       current: model.id === currentModelId,
     })),
     modelCount: summary.models.length,
+    delegationAliases,
     note: summary.models.length > 0
-      ? '创建协作子会话时，可从 models[].id 中选择 modelId；不传则继承 currentModelId。'
+      ? '创建协作子会话时，可传 delegationAliases 中的 alias，或从 models 中选择当前渠道的 modelId。'
       : '当前渠道没有启用的 Agent 模型，请先在渠道设置中启用模型。',
+  }
+}
+
+function cancelRunningDelegation(record: DelegationRecord): void {
+  if (record.status !== 'running') return
+  try {
+    stopRegisteredAgent(record.childSessionId)
+  } finally {
+    markDelegationFinished(record, 'cancelled')
   }
 }
 
@@ -673,8 +806,7 @@ function stopDelegation(parentSessionId: string, delegationId: string): Record<s
     }
   }
 
-  stopRegisteredAgent(record.childSessionId)
-  markDelegationFinished(record, 'cancelled')
+  cancelRunningDelegation(record)
   return {
     delegation: getDelegationSummary(record),
     stopped: true,
@@ -685,32 +817,25 @@ function startDelegation(
   ctx: CollaborationToolContext,
   parent: AgentSessionMeta | undefined,
   args: DelegateAgentArgs,
+  source?: { userMessageUuid?: string; readOnly: boolean },
 ): StartDelegationResult {
   const task = assertNonBlank(args.task, 'task')
   const delegationId = randomUUID()
   const role = args.role ?? 'custom'
-  const title = normalizeTitle(args.title, `协作：${task}`)
+  const { alias, channelId, modelId: effectiveModelId, thinkingLevel } = resolveDelegationTarget(ctx, parent, args)
+  const title = normalizeTitle(args.title, alias
+    ? `@${alias} · ${task.replace(/@agent:/gi, '@').replace(/^(?:@[a-z][a-z0-9-]*\s+)+/i, '')}`
+    : `协作：${task}`)
   const goal = truncateText(task, DELEGATION_GOAL_CHAR_LIMIT)
   const parentPermissionMode = getCurrentParentPermissionMode(parent, ctx.permissionMode)
   const permissionMode = resolveDelegationPermissionMode(
     parentPermissionMode,
     args.permissionMode,
   )
-  const thinkingLevel = assertThinkingLevel(args.thinkingLevel)
-  const effectiveModelId = args.modelId !== undefined
-    ? assertEnabledModelForChannel({
-        channelId: ctx.channelId,
-        modelId: args.modelId,
-        purpose: '创建协作子会话',
-      })
-    : ctx.modelId?.trim() || undefined
-
   const { completion, resolveCompletion } = createDelegationCompletion()
 
-  const child = createAgentSession(title, ctx.channelId, ctx.workspaceId, effectiveModelId)
-  const childThinkingLevel: AgentThinkingLevel = thinkingLevel ?? child.reasoningLevel ?? 'high'
   const rootSessionId = parent?.rootSessionId ?? parent?.id ?? ctx.sessionId
-  updateAgentSessionMeta(child.id, {
+  const child = createAgentSession(title, channelId, ctx.workspaceId, effectiveModelId, alias ? parent?.agentCwdMode : undefined, undefined, undefined, {
     parentSessionId: ctx.sessionId,
     rootSessionId,
     sourceDelegationId: delegationId,
@@ -719,16 +844,22 @@ function startDelegation(
     delegationStatus: 'running',
     delegationDepth: (parent?.delegationDepth ?? 0) + 1,
     delegationGoal: goal,
+    delegationAlias: alias,
+    sourceDelegationUserMessageUuid: source?.userMessageUuid,
+    delegationReadOnly: source?.readOnly || undefined,
+    activeWorktree: alias ? parent?.activeWorktree : undefined,
     permissionMode,
     ...(thinkingLevel ? { reasoningLevel: thinkingLevel } : {}),
   })
+  const childThinkingLevel: AgentThinkingLevel = child.reasoningLevel ?? 'high'
 
   const record: DelegationRecord = {
     delegationId,
     parentSessionId: ctx.sessionId,
     childSessionId: child.id,
-    channelId: ctx.channelId,
+    channelId,
     modelId: effectiveModelId,
+    alias,
     thinkingLevel: childThinkingLevel,
     title,
     role,
@@ -754,7 +885,7 @@ function startDelegation(
     {
       sessionId: child.id,
       userMessage: prompt,
-      channelId: ctx.channelId,
+      channelId,
       modelId: effectiveModelId,
       workspaceId: ctx.workspaceId,
       permissionModeOverride: permissionMode,
@@ -767,8 +898,12 @@ function startDelegation(
       onError: (error) => {
         markDelegationFinished(record, 'failed', { error })
       },
-      onComplete: (messages) => {
+      onComplete: (messages, opts) => {
         if (record.status !== 'running') return
+        if (opts?.stoppedByUser) {
+          markDelegationFinished(record, 'cancelled')
+          return
+        }
         const resultSummary = summarizeChildResult(child.id, messages)
         markDelegationFinished(record, 'completed', { resultSummary })
       },
@@ -790,6 +925,91 @@ function startDelegation(
   }
 }
 
+export interface MentionedAgentDelegationResult {
+  alias: string
+  status: AgentDelegationStatus
+  childSessionId?: string
+  modelId?: string
+  thinkingLevel?: AgentThinkingLevel
+  resultSummary?: string
+  error?: string
+}
+
+export async function runMentionedAgentDelegations(
+  ctx: CollaborationToolContext,
+  aliases: readonly string[],
+  task: string,
+  signal: AbortSignal,
+  userMessageUuid?: string,
+): Promise<MentionedAgentDelegationResult[]> {
+  const previousChildren = new Map<string, AgentSessionMeta>()
+  if (userMessageUuid) {
+    for (const session of listAgentSessions()) {
+      if (session.parentSessionId === ctx.sessionId &&
+        session.sourceDelegationUserMessageUuid === userMessageUuid &&
+        session.delegationAlias && session.sourceDelegationId &&
+        !previousChildren.has(session.delegationAlias)) {
+        previousChildren.set(session.delegationAlias, session)
+      }
+    }
+  }
+
+  const children: DelegationRecord[] = []
+  const cancel = (record: DelegationRecord): void => {
+    try {
+      cancelRunningDelegation(record)
+    } catch (error) {
+      console.warn('[协作工具] 未能停止委派', record.delegationId, error)
+    }
+  }
+  const onAbort = (): void => {
+    children.forEach(cancel)
+  }
+
+  signal.addEventListener('abort', onAbort, { once: true })
+  try {
+    const uniqueAliases = new Set(aliases.map((alias) => alias.trim().toLowerCase()))
+    return await Promise.all(Array.from(uniqueAliases, async (alias): Promise<MentionedAgentDelegationResult> => {
+      if (signal.aborted) return { alias, status: 'cancelled' }
+      try {
+        const previous = previousChildren.get(alias)
+        const previousId = previous?.sourceDelegationId
+        const record = previous && previousId
+          ? delegations.get(previousId) ?? recoverDelegationRecordFromSession(
+              ctx.sessionId, previousId, previous, ctx.permissionMode, ctx.channelId, ctx.modelId,
+            )
+          : startDelegation(ctx, assertCanCreateDelegation(ctx), { alias, task }, {
+              userMessageUuid,
+              readOnly: uniqueAliases.size > 1,
+            }).record
+        children.push(record)
+        if (signal.aborted) cancel(record)
+        await record.completion
+        const summary = record.status === 'completed'
+          ? record.resultSummary ?? summarizeChildResult(record.childSessionId)
+          : undefined
+        return {
+          alias,
+          status: record.status,
+          childSessionId: record.childSessionId,
+          modelId: record.modelId,
+          thinkingLevel: record.thinkingLevel,
+          resultSummary: summary && truncateText(summary, MENTIONED_RESULT_SUMMARY_CHAR_LIMIT),
+          error: record.error,
+        }
+      } catch (error) {
+        return {
+          alias,
+          status: 'failed',
+          error: error instanceof Error ? error.message : String(error),
+        }
+      }
+    }))
+  } finally {
+    signal.removeEventListener('abort', onAbort)
+  }
+}
+
 // ===== Pi Runtime 桥接 =====
 
 /**
@@ -798,7 +1018,7 @@ function startDelegation(
  * 只是用 Pi SDK 的 defineTool() + TypeBox schema 包装。
  */
 export function buildPiCollaborationTools(
-  sdk: typeof import('@earendil-works/pi-coding-agent'),
+  sdk: { defineTool<TParams extends TSchema>(tool: ToolDefinition<TParams>): unknown },
   ctx: CollaborationToolContext,
 ): unknown[] {
   const { Type } = require('typebox') as typeof import('typebox')
@@ -819,7 +1039,8 @@ export function buildPiCollaborationTools(
     Type.Literal('high'),
     Type.Literal('xhigh'),
     Type.Literal('max'),
-  ], { description: '子会话思考强度；未传则使用新会话默认值' }))
+  ], { description: '子会话思考强度；未传则使用别名配置或新会话默认值' }))
+  const aliasType = Type.Optional(Type.String({ description: '可选 Agent 别名，不带 @，不能与 modelId 同时传入' }))
 
   const delegateItemType = Type.Object({
     title: Type.Optional(Type.String({ description: '子会话标题' })),
@@ -827,6 +1048,7 @@ export function buildPiCollaborationTools(
     task: Type.String({ description: '发送给子 Agent 的完整任务说明' }),
     expectedOutput: Type.Optional(Type.String({ description: '希望子 Agent 最终返回的格式或要点' })),
     modelId: Type.Optional(Type.String({ description: '可选目标模型 ID' })),
+    alias: aliasType,
     thinkingLevel: thinkingLevelType,
   })
 
@@ -842,7 +1064,7 @@ export function buildPiCollaborationTools(
     sdk.defineTool({
       name: 'mcp__collaboration__list_available_agent_models',
       label: '列出可用模型',
-      description: '列出当前父会话渠道下已启用、可用于协作子 Agent 的模型。需要给 delegate_agent/delegate_agents 指定 modelId 前应先调用此工具。',
+      description: '列出 Agent 别名、各自的模型和默认思考强度，以及当前渠道已启用的模型。指定 alias 或 modelId 前应先调用此工具。',
       parameters: Type.Object({}),
       async execute() {
         return piJsonResult(getAvailableAgentModels(ctx))
@@ -858,6 +1080,7 @@ export function buildPiCollaborationTools(
         task: Type.String({ description: '发送给子 Agent 的完整任务说明，必须自包含必要上下文' }),
         expectedOutput: Type.Optional(Type.String({ description: '希望子 Agent 最终返回的格式或要点' })),
         modelId: Type.Optional(Type.String({ description: '可选目标模型 ID' })),
+        alias: aliasType,
         thinkingLevel: thinkingLevelType,
       }),
       async execute(toolCallId: string, params: unknown) {
@@ -1134,6 +1357,12 @@ export function buildPiCollaborationTools(
         if (record.status === 'running') {
           throw new Error(`委派正在运行中，无法追加指令: ${args.delegationId}`)
         }
+        if (record.alias) {
+          const target = resolveDelegationTarget(ctx, getAgentSessionMeta(ctx.sessionId), { alias: record.alias, task: args.message })
+          if (target.channelId !== record.channelId || target.modelId !== record.modelId) {
+            throw new Error(`Agent 别名 @${record.alias} 的渠道或模型已变更，请启动新的委派`)
+          }
+        }
 
         record.status = 'running'
         record.error = undefined
@@ -1162,8 +1391,12 @@ export function buildPiCollaborationTools(
             onError: (error) => {
               markDelegationFinished(record, 'failed', { error })
             },
-            onComplete: (messages) => {
+            onComplete: (messages, opts) => {
               if (record.status !== 'running') return
+              if (opts?.stoppedByUser) {
+                markDelegationFinished(record, 'cancelled')
+                return
+              }
               const resultSummary = summarizeChildResult(record.childSessionId, messages)
               markDelegationFinished(record, 'completed', { resultSummary })
             },

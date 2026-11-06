@@ -813,6 +813,10 @@ export interface AgentSessionMeta {
   rootSessionId?: string
   /** 来源委派任务 ID（由 collaboration 工具生成，用于父子会话关联） */
   sourceDelegationId?: string
+  /** 显式 @ 委派对应的父会话消息，用于重试时复用子会话。 */
+  sourceDelegationUserMessageUuid?: string
+  delegationAlias?: string
+  delegationReadOnly?: boolean
   /** 委派角色，用于 UI 和后续统计 */
   delegationRole?: AgentDelegationRole
   /** 委派任务当前状态 */

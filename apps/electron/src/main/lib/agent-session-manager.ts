@@ -395,9 +395,13 @@ export function resolveAgentWorkbenchDir(
   return getAgentSessionWorkspacePath(workspace.slug, sessionId)
 }
 
-/**
- * 创建新会话
- */
+type AgentDelegationSessionMetadata = Pick<AgentSessionMeta,
+  | 'parentSessionId' | 'rootSessionId' | 'sourceDelegationId' | 'sourceAutomationId'
+  | 'delegationRole' | 'delegationStatus' | 'delegationDepth' | 'delegationGoal'
+  | 'delegationAlias' | 'delegationReadOnly' | 'sourceDelegationUserMessageUuid'
+  | 'permissionMode' | 'reasoningLevel' | 'activeWorktree'
+>
+
 export function createAgentSession(
   title?: string,
   channelId?: string,
@@ -406,6 +410,7 @@ export function createAgentSession(
   agentCwdMode?: AgentCwdMode,
   sessionWorkbenchLayout?: SessionWorkbenchLayout,
   isDraft?: boolean,
+  delegation?: AgentDelegationSessionMetadata,
 ): AgentSessionMeta {
   const index = readIndex()
   const now = Date.now()
@@ -425,6 +430,7 @@ export function createAgentSession(
     isDraft: isDraft || undefined,
     // 新会话继承已持久化的全局思考偏好，之后仍可按会话单独调整。
     reasoningLevel: defaultThinkingLevel,
+    ...delegation,
     createdAt: now,
     updatedAt: now,
   }

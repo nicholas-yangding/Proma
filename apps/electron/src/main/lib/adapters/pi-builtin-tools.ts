@@ -12,6 +12,7 @@ import type { ToolDefinition } from '@earendil-works/pi-coding-agent'
 import type { AgentToolResult } from '@earendil-works/pi-agent-core'
 import { AGENT_IPC_CHANNELS, getTerminalProfilesForPlatform, normalizePathForCompare, parseTerminalProfile } from '@proma/shared'
 import type {
+  AgentThinkingLevel,
   AgentWorkspace,
   CreateAutomationInput,
   PromaPermissionMode,
@@ -90,7 +91,7 @@ import {
 } from './automation-tool-schema'
 import { updateSettings } from '../settings-service'
 import { getConfiguredVaultFileSystem, getVaultConfig } from '../vault-service'
-import type { ProductivityToolsSettings } from '../../../types'
+import type { AgentDelegationProfile, ProductivityToolsSettings } from '../../../types'
 
 type PiSdk = typeof import('@earendil-works/pi-coding-agent')
 
@@ -100,6 +101,9 @@ export interface PiBuiltinToolsContext {
   sessionId: string
   channelId: string
   modelId?: string
+  thinkingLevel?: AgentThinkingLevel
+  agentDelegationProfiles?: readonly AgentDelegationProfile[]
+  getAgentDelegationProfiles?: () => readonly AgentDelegationProfile[]
   workspaceId?: string
   workspaceSlug?: string
   /** 当前 Agent 工作目录；用于解析本地网页预览等相对路径。 */
@@ -107,6 +111,7 @@ export interface PiBuiltinToolsContext {
   /** 图片外发前必须校验在这些已授权目录内。 */
   allowedRoots?: string[]
   permissionMode?: PromaPermissionMode
+  getPermissionMode?: () => PromaPermissionMode | undefined
   triggeredBy?: 'user' | 'automation' | 'delegation' | 'external'
   /** Windows 设备是否已有可供 Pi Bash 使用的 Git Bash 或 WSL。 */
   windowsShellAvailable?: boolean
@@ -1587,7 +1592,8 @@ export async function buildPiBuiltinTools(
   // collaboration 桥接
   // 协作是 Proma 基础运行时能力；仅由工作区和委派上下文决定是否可用。
   const collaborationAvailable = !!ctx.workspaceId &&
-    ctx.triggeredBy !== 'delegation'
+    ctx.triggeredBy !== 'delegation' &&
+    !(getAgentSessionMeta(ctx.sessionId)?.delegationDepth)
 
   if (collaborationAvailable) {
     try {
@@ -1595,9 +1601,13 @@ export async function buildPiBuiltinTools(
         sessionId: ctx.sessionId,
         channelId: ctx.channelId,
         modelId: ctx.modelId,
+        thinkingLevel: ctx.thinkingLevel,
+        agentDelegationProfiles: ctx.agentDelegationProfiles,
+        getAgentDelegationProfiles: ctx.getAgentDelegationProfiles,
         workspaceId: ctx.workspaceId,
         permissionMode: ctx.permissionMode,
-        triggeredBy: ctx.triggeredBy === 'external' ? 'user' : ctx.triggeredBy,
+        getPermissionMode: ctx.getPermissionMode,
+        triggeredBy: ctx.triggeredBy,
       })
       tools.push(...collaborationTools as ToolDefinition[])
     } catch (error) {

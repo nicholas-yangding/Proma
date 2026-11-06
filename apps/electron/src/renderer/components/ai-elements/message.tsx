@@ -22,7 +22,7 @@ import Markdown, { defaultUrlTransform } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
-import { CalendarDays, ChevronDown, ChevronUp, Paperclip, FileText, ListTodo, Sparkles, Server, Download, MessageSquareText, Quote } from 'lucide-react'
+import { Bot, CalendarDays, ChevronDown, ChevronUp, Paperclip, FileText, ListTodo, Sparkles, Server, Download, MessageSquareText, Quote } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { shouldInspectMermaidCodeBlock, shouldRenderMermaidCodeBlock } from '@/lib/mermaid-detection'
 import { normalizeLatexDelimiters } from '@/lib/normalize-latex'
@@ -262,7 +262,7 @@ function walkMdastText(
 
 // ----- MentionChip 组件 -----
 
-type MentionType = 'file' | 'skill' | 'mcp' | 'session' | 'todo' | 'calendar_event' | 'quote'
+type MentionType = 'file' | 'skill' | 'mcp' | 'session' | 'todo' | 'calendar_event' | 'quote' | 'agent'
 
 const MENTION_STYLES: Record<MentionType, { icon: typeof FileText; className: string }> = {
   file: { icon: FileText, className: 'bg-primary/10 text-primary' },
@@ -272,6 +272,7 @@ const MENTION_STYLES: Record<MentionType, { icon: typeof FileText; className: st
   todo: { icon: ListTodo, className: 'bg-amber-500/15 text-amber-800 dark:text-amber-200' },
   calendar_event: { icon: CalendarDays, className: 'bg-cyan-500/15 text-cyan-800 dark:text-cyan-200' },
   quote: { icon: Quote, className: 'bg-primary/10 text-primary' },
+  agent: { icon: Bot, className: 'bg-primary/10 text-primary' },
 }
 
 function safeDecode(raw: string): string {
@@ -407,7 +408,7 @@ function MentionChip({ type, value }: { type: MentionType; value: string }): Rea
         ? (label || `Todo ${referenceId.slice(0, 8)}`)
         : type === 'calendar_event'
           ? (label || `日程 ${referenceId.slice(0, 8)}`)
-          : decoded
+          : type === 'agent' ? `@${decoded}` : decoded
   return (
     <span
       className={cn(
@@ -454,8 +455,8 @@ export function remarkMentions() {
                   ? 'todo'
                   : m[8]
                     ? 'calendar_event'
-                    : 'quote'
-        const referenceId = m[1] ?? m[2] ?? m[3] ?? m[4] ?? m[6] ?? m[8] ?? m[10] ?? ''
+                    : m[10] ? 'quote' : 'agent'
+        const referenceId = m[1] ?? m[2] ?? m[3] ?? m[4] ?? m[6] ?? m[8] ?? m[10] ?? m.groups?.agent ?? ''
         const encodedLabel = m[5] ?? m[7] ?? m[9]
         const rawValue = encodedLabel ? `${referenceId}::${safeDecode(encodedLabel)}` : referenceId
         // 文件/Skill/MCP 旧消息可能已经编码；带标题的 named reference 始终重新编码整个值。
@@ -542,7 +543,7 @@ function mentionUrlTransform(url: string): string {
 // ===== Memo'd Markdown 子组件（稳定引用，避免 react-markdown 每帧重建组件映射） =====
 
 /** mention:// URL 匹配 */
-const MENTION_URL_RE = /^mention:\/\/(file|skill|mcp|session|todo|calendar_event|quote)\/(.+)$/
+const MENTION_URL_RE = /^mention:\/\/(file|skill|mcp|session|todo|calendar_event|quote|agent)\/(.+)$/
 
 /** 外部链接 / mention chip 渲染器 */
 const MarkdownLink = React.memo(function MarkdownLink({

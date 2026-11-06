@@ -445,6 +445,11 @@ export function getToolPhrase(toolName: string, input: Record<string, unknown>):
       return phrase('发送消息')
     }
 
+    case 'mcp__collaboration__delegate_agent':
+      return phrase(typeof input.alias === 'string' ? `委派给 @${input.alias}` : '委派子 Agent')
+    case 'mcp__collaboration__delegate_agents':
+      return phrase('并行委派 Agent')
+
     default: {
       // MCP 工具：mcp__serverName__toolName
       const mcpParts = toolName.split('__')

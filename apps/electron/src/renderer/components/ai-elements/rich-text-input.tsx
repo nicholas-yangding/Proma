@@ -14,7 +14,7 @@
  */
 
 import { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback, useImperativeHandle, forwardRef } from 'react'
-import { useAtomValue } from 'jotai'
+import { useAtomValue, useStore } from 'jotai'
 import { useEditor, EditorContent } from '@tiptap/react'
 import { DOMParser as ProseMirrorDOMParser } from '@tiptap/pm/model'
 import { TextSelection } from '@tiptap/pm/state'
@@ -49,6 +49,7 @@ import { isImageFilePath } from './file-path-chip'
 import { consumeLocalDraftEcho, recordLocalDraftEcho } from '@/lib/input-draft-echo'
 import { resolveMentionSuggestionChar } from './mention-utils'
 import { richTextRenderingEnabledAtom } from '@/atoms/ui-preferences'
+import { channelsAtom } from '@/atoms/chat-atoms'
 import { createFileMentionSuggestion } from '@/components/file-browser/file-mention-suggestion'
 import { getFilePanelDragData, type FilePanelDragItem } from '@/lib/file-panel-drag'
 import {
@@ -165,6 +166,7 @@ interface RichTextInputProps {
   collapsible?: boolean
   /** 是否启用文件、Skill、MCP、会话和规划引用 chip。 */
   enableMentions?: boolean
+  enableAgentMentions?: boolean
   /** 工作区根路径（启用 @ 文件引用功能时需要） */
   workspacePath?: string | null
   /** 工作区 slug（启用 / Skill 和 # MCP 功能时需要） */
@@ -229,6 +231,7 @@ export const RichTextInput = forwardRef<RichTextInputHandle, RichTextInputProps>
   autoFocusTrigger,
   collapsible = false,
   enableMentions,
+  enableAgentMentions = false,
   workspacePath,
   workspaceSlug,
   sessionId,
@@ -294,6 +297,8 @@ export const RichTextInput = forwardRef<RichTextInputHandle, RichTextInputProps>
   // 当前会话 ID 引用（给 & 会话和 ~ 规划引用使用）
   const currentSessionIdRef = useRef<string | null>(sessionId ?? null)
   currentSessionIdRef.current = sessionId ?? null
+  const agentMentionsEnabledRef = useRef(enableAgentMentions)
+  agentMentionsEnabledRef.current = enableAgentMentions
   // 工作区级附加目录路径引用（给 @ 文件引用使用，标记为 workspace）
   const attachedDirsRef = useRef<string[]>(attachedDirs)
   attachedDirsRef.current = attachedDirs
@@ -315,6 +320,7 @@ export const RichTextInput = forwardRef<RichTextInputHandle, RichTextInputProps>
 
   // 输入框 Markdown 渲染开关：关闭后为纯文本模式（禁用格式化扩展 + 粘贴跳过 HTML 解析），Mention 仍保留
   const richTextEnabled = useAtomValue(richTextRenderingEnabledAtom)
+  const store = useStore()
   const richTextEnabledRef = useRef(richTextEnabled)
   richTextEnabledRef.current = richTextEnabled
   const isMac = useMemo(() => isMacPlatform(), [])
@@ -384,8 +390,9 @@ export const RichTextInput = forwardRef<RichTextInputHandle, RichTextInputProps>
       mentionItemCountRef,
       sessionAttachedDirsRef,
       currentOpenFileRef,
+      { enabled: agentMentionsEnabledRef, getChannels: () => store.get(channelsAtom) },
     ),
-    [],
+    [store],
   )
   const skillMentionSuggestion = useMemo(
     () => createSkillMentionSuggestion(workspaceSlugRef, mentionActiveRef, mentionItemCountRef),
@@ -583,10 +590,10 @@ export const RichTextInput = forwardRef<RichTextInputHandle, RichTextInputProps>
                 default: null,
                 parseHTML: (el: HTMLElement) => {
                   const value = el.getAttribute('data-mention-reference-type')
-                  return value === 'todo' || value === 'calendar_event' ? value : null
+                  return value === 'todo' || value === 'calendar_event' || value === 'agent' ? value : null
                 },
                 renderHTML: (attrs: Record<string, unknown>) => (
-                  attrs.referenceType === 'todo' || attrs.referenceType === 'calendar_event'
+                  attrs.referenceType === 'todo' || attrs.referenceType === 'calendar_event' || attrs.referenceType === 'agent'
                     ? { 'data-mention-reference-type': attrs.referenceType }
                     : {}
                 ),
@@ -643,6 +650,7 @@ export const RichTextInput = forwardRef<RichTextInputHandle, RichTextInputProps>
             const isNavigableHistoryQuote = quotedSelection?.sourceType === 'agent-history'
             let chipClass = isDirectory ? 'directory-mention-chip' : 'mention-chip'
             if (quotePayload) chipClass = 'agent-history-quote-chip'
+            else if (referenceType === 'agent') chipClass = 'inline-flex rounded bg-primary/10 px-1 py-px align-baseline text-[13px] font-medium text-primary whitespace-nowrap'
             else if (referenceType === 'todo') chipClass = 'todo-mention-chip'
             else if (referenceType === 'calendar_event') chipClass = 'calendar-event-mention-chip'
             else if (char === '/') chipClass = 'skill-mention-chip'
@@ -655,7 +663,7 @@ export const RichTextInput = forwardRef<RichTextInputHandle, RichTextInputProps>
                 'data-id': node.attrs.id,
                 'data-label': node.attrs.label,
                 'data-mention-suggestion-char': char,
-                ...(referenceType === 'todo' || referenceType === 'calendar_event'
+                ...(referenceType === 'todo' || referenceType === 'calendar_event' || referenceType === 'agent'
                   ? { 'data-mention-reference-type': referenceType }
                   : {}),
                 ...(quotePayload ? { 'data-mention-quote': quotePayload } : {}),
@@ -669,7 +677,7 @@ export const RichTextInput = forwardRef<RichTextInputHandle, RichTextInputProps>
                   : {}),
                 ...(node.attrs.commandMenuMention ? { 'data-command-menu-mention': 'true' } : {}),
                 ...(isDirectory ? { 'data-mention-is-directory': 'true' } : {}),
-                ...(char === '@' && !isDirectory && isImageFilePath(String(node.attrs.id))
+                ...(char === '@' && referenceType !== 'agent' && !isDirectory && isImageFilePath(String(node.attrs.id))
                   ? { 'data-mention-previewable': 'true' }
                   : {}),
                 class: chipClass,

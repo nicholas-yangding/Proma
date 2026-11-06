@@ -293,6 +293,20 @@ export function normalizeProductivityToolsSettings(input: unknown): Productivity
 /** 提升此版本可要求用户重新确认更新后的受管浏览器风险告知。 */
 export const BROWSER_RISK_DISCLAIMER_VERSION = 1
 
+export const AGENT_DELEGATION_ALIAS_SOURCE = '[a-z][a-z0-9-]{0,31}'
+export const AGENT_DELEGATION_ALIAS_PATTERN = new RegExp(`^${AGENT_DELEGATION_ALIAS_SOURCE}$`)
+export const AGENT_DELEGATION_MENTION_SOURCE =
+  String.raw`(?<![a-z0-9_./\\@-])@agent:(?<agent>${AGENT_DELEGATION_ALIAS_SOURCE})(?![a-z0-9_/-]|\.[a-z0-9_./-])`
+export const CURRENT_AGENT_DELEGATION_ALIAS = 'self'
+
+export interface AgentDelegationProfile {
+  alias: string
+  channelId: string
+  modelId: string
+  thinkingLevel: AgentThinkingLevel
+  description?: string
+}
+
 /** 应用设置 */
 export interface AppSettings {
   /** 主题模式 */
@@ -303,6 +317,8 @@ export interface AppSettings {
   agentChannelId?: string
   /** Agent 默认模型 ID */
   agentModelId?: string
+  /** 桌面 Agent 委派可使用的命名模型配置 */
+  agentDelegationProfiles?: AgentDelegationProfile[]
   /** Agent 当前工作区 ID */
   agentWorkspaceId?: string
   /** Windows 上用户最近一次明确选择的 Agent 终端 Shell；未设置时使用系统默认。 */

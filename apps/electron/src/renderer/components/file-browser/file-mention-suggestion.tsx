@@ -1,8 +1,7 @@
 /**
  * FileMentionSuggestion — TipTap Mention Suggestion 配置
  *
- * 工厂函数，创建用于 @ 引用文件的 TipTap Suggestion 配置。
- * 输入 @ 后异步搜索会话文件、项目文件与附加目录，弹出 FileMentionList 浮动列表。
+ * 输入 @ 后在同一个列表中显示可委派的 Agent 和可引用的文件。
  * 弹窗底部锚定在光标上方，展开文件夹时向上生长。
  */
 
@@ -11,14 +10,17 @@ import { ReactRenderer } from '@tiptap/react'
 import type { SuggestionOptions, SuggestionProps } from '@tiptap/suggestion'
 import { toast } from 'sonner'
 import { FileMentionList } from './FileMentionList'
-import type { FileMentionRef } from './FileMentionList'
-import type { FileIndexEntry } from '@proma/shared'
+import type { AgentMentionEntry, FileMentionListProps, FileMentionRef } from './FileMentionList'
+import type { Channel, FileIndexEntry } from '@proma/shared'
+import { CURRENT_AGENT_DELEGATION_ALIAS } from '@/types/settings'
 import { createDebouncedSuggestionLoader, createLatestSuggestionRequestGuard, createMentionPopup, positionPopup, isSuggestionTriggerPresent, shouldSuppressEscTrigger, shouldClearEscSuppressionOnExit, type EscSuppressedTrigger } from '@/components/agent/mention-popup-utils'
 import { shouldAllowMentionTrigger, shouldShowMentionSuggestion } from '@/components/ai-elements/mention-utils'
 import { resolveFileMentionPath } from './file-mention-path'
 import { pinCurrentFileEntry } from './file-mention-pin'
 
-type MentionSelection = Pick<FileIndexEntry, 'name' | 'path' | 'type' | 'source'>
+type AtMentionChoice =
+  | { kind: 'file'; entry: FileIndexEntry; pinned?: true }
+  | { kind: 'agent'; entry: AgentMentionEntry }
 
 export function createFileMentionSuggestion(
   workspacePathRef: React.RefObject<string | null>,
@@ -27,7 +29,8 @@ export function createFileMentionSuggestion(
   mentionItemCountRef?: React.MutableRefObject<number>,
   sessionAttachedDirsRef?: React.RefObject<string[]>,
   currentFileRef?: React.RefObject<string | null>,
-): Omit<SuggestionOptions<FileIndexEntry>, 'editor'> {
+  agentMentions?: { enabled: React.RefObject<boolean>; getChannels: () => Channel[] },
+): Omit<SuggestionOptions<AtMentionChoice>, 'editor'> {
   let missingWorkspaceToastShown = false
   // Esc 抑制：记录被 Esc 关闭的触发片段文本。
   // TipTap suggestion 按 Esc 后会 dispatchExit 置 inactive，但触发符仍在文档中，
@@ -35,10 +38,63 @@ export function createFileMentionSuggestion(
   // 直到用户重新触发（片段结束或内容变化）才恢复正常。
   // 用文本而非位置判断：删除触发符前的字符导致位置移动时，片段仍延续，继续抑制。
   let suppressedTrigger: EscSuppressedTrigger | null = null
-  const requestGuard = createLatestSuggestionRequestGuard<FileIndexEntry>()
+  const requestGuard = createLatestSuggestionRequestGuard<AtMentionChoice>()
   const queryLoader = createDebouncedSuggestionLoader(requestGuard)
-  // pinned 与 items() 同步写入、render 时读取；cleanup 重置避免跨触发残留。
-  let latestPinned: FileIndexEntry | undefined
+
+  async function loadAgentEntries(query: string): Promise<AtMentionChoice[]> {
+    if (!agentMentions?.enabled.current) return []
+    const entries: AgentMentionEntry[] = [
+      { alias: CURRENT_AGENT_DELEGATION_ALIAS, description: '当前会话模型' },
+    ]
+    try {
+      const { agentDelegationProfiles } = await window.electronAPI.getSettings()
+      const channels = agentMentions.getChannels()
+      for (const profile of agentDelegationProfiles ?? []) {
+        const channel = channels.find((candidate) => candidate.id === profile.channelId && candidate.enabled)
+        if (channel?.models.some((model) => model.id === profile.modelId && model.enabled)) {
+          entries.push({ alias: profile.alias, description: profile.modelId })
+        }
+      }
+    } catch (error) {
+      console.error('[Agent 引用] 读取设置失败:', error)
+    }
+    return entries
+      .filter((entry) => entry.alias.startsWith(query.toLowerCase()))
+      .map((entry) => ({ kind: 'agent', entry }))
+  }
+
+  async function loadFileEntries(query: string): Promise<AtMentionChoice[]> {
+    const wsPath = workspacePathRef.current
+    if (!wsPath) {
+      if (!agentMentions?.enabled.current && !missingWorkspaceToastShown) {
+        toast.warning('暂时无法引用文件', {
+          description: '当前 Agent 会话没有可用的项目路径。请在顶部选择项目，或新建 Agent 会话后重试。',
+        })
+        missingWorkspaceToastShown = true
+      }
+      return []
+    }
+    missingWorkspaceToastShown = false
+
+    try {
+      const additionalPaths = attachedDirsRef?.current ?? []
+      const sessionPaths = sessionAttachedDirsRef?.current ?? []
+      const result = await window.electronAPI.searchWorkspaceFiles(
+        wsPath,
+        query,
+        200,
+        additionalPaths.length > 0 ? additionalPaths : undefined,
+        sessionPaths.length > 0 ? sessionPaths : undefined,
+      )
+      const { entries, pinnedEntry } = pinCurrentFileEntry(result.entries, currentFileRef?.current, query)
+      const choices: AtMentionChoice[] = entries.map((entry) => ({ kind: 'file', entry }))
+      if (pinnedEntry) choices.unshift({ kind: 'file', entry: pinnedEntry, pinned: true })
+      return choices
+    } catch (error) {
+      console.error('[FileMention] search failed:', error)
+      return []
+    }
+  }
 
   return {
     char: '@',
@@ -61,37 +117,9 @@ export function createFileMentionSuggestion(
       })
     },
 
-    items: ({ query }): Promise<FileIndexEntry[]> => queryLoader.load(async () => {
-      const wsPath = workspacePathRef.current
-      if (!wsPath) {
-        console.warn('[FileMention] workspacePath is null, mention disabled')
-        if (!missingWorkspaceToastShown) {
-          toast.warning('暂时无法引用文件', {
-            description: '当前 Agent 会话没有可用的项目路径。请在顶部选择项目，或新建 Agent 会话后重试。',
-          })
-          missingWorkspaceToastShown = true
-        }
-        return []
-      }
-      missingWorkspaceToastShown = false
-
-      try {
-        const additionalPaths = attachedDirsRef?.current ?? []
-        const sessionPaths = sessionAttachedDirsRef?.current ?? []
-        const result = await window.electronAPI.searchWorkspaceFiles(
-          wsPath,
-          query ?? '',
-          200,
-          additionalPaths.length > 0 ? additionalPaths : undefined,
-          sessionPaths.length > 0 ? sessionPaths : undefined,
-        )
-        const pinned = pinCurrentFileEntry(result.entries, currentFileRef?.current, query ?? '')
-        latestPinned = pinned.pinnedEntry
-        return pinned.entries
-      } catch (error) {
-        console.error('[FileMention] search failed:', error)
-        return []
-      }
+    items: ({ query }): Promise<AtMentionChoice[]> => queryLoader.load(async () => {
+      const [agents, files] = await Promise.all([loadAgentEntries(query), loadFileEntries(query)])
+      return [...agents, ...files]
     }),
 
     render: () => {
@@ -100,30 +128,35 @@ export function createFileMentionSuggestion(
       let resizeObserver: ResizeObserver | null = null
       let latestClientRect: (() => DOMRect | null) | null | undefined = null
       let blurHandler: (() => void) | null = null
-      let editorRef: SuggestionProps<FileIndexEntry>['editor'] | null = null
+      let editorRef: SuggestionProps<AtMentionChoice>['editor'] | null = null
 
       // 用本次查询的 props.items 按 source 分组渲染弹窗，
       // 避免共享闭包 lastResult 被并发 view.update（第一个 @ 片段延续的慢搜索）
       // 覆盖，导致第二个 @ 弹窗显示旧/空结果（"无匹配文件"）。
-      function splitEntries(items: FileIndexEntry[]) {
+      function listProps(props: SuggestionProps<AtMentionChoice>): FileMentionListProps {
+        const agentEntries: AgentMentionEntry[] = []
+        const sessionEntries: FileIndexEntry[] = []
+        const workspaceEntries: FileIndexEntry[] = []
+        let pinnedEntry: FileIndexEntry | undefined
+        for (const item of props.items) {
+          if (item.kind === 'agent') agentEntries.push(item.entry)
+          else if (item.pinned) pinnedEntry = item.entry
+          else if (item.entry.source === 'session') sessionEntries.push(item.entry)
+          else workspaceEntries.push(item.entry)
+        }
         return {
-          sessionEntries: items.filter((item) => item.source === 'session'),
-          workspaceEntries: items.filter((item) => item.source === 'workspace'),
+          agentEntries,
+          sessionEntries,
+          workspaceEntries,
+          pinnedEntry,
+          onSelect: (item) => props.command({ id: resolveFileMentionPath(item, workspacePathRef.current), label: item.name }),
+          onSelectAgent: (item) => props.command({ id: item.alias, label: item.alias, referenceType: 'agent' }),
         }
       }
 
-      function createRenderer(props: SuggestionProps<FileIndexEntry>) {
-        const { sessionEntries, workspaceEntries } = splitEntries(props.items)
-        const selectItem = (item: MentionSelection) => {
-          props.command({ id: resolveFileMentionPath(item, workspacePathRef.current), label: item.name })
-        }
+      function createRenderer(props: SuggestionProps<AtMentionChoice>) {
         renderer = new ReactRenderer(FileMentionList, {
-          props: {
-            sessionEntries,
-            workspaceEntries,
-            pinnedEntry: latestPinned,
-            onSelect: selectItem,
-          },
+          props: listProps(props),
           editor: props.editor,
         })
       }
@@ -135,7 +168,6 @@ export function createFileMentionSuggestion(
 
       function cleanup() {
         queryLoader.cancel()
-        latestPinned = undefined
         if (blurHandler && editorRef) {
           editorRef.view.dom.removeEventListener('blur', blurHandler, true)
           blurHandler = null
@@ -215,16 +247,7 @@ export function createFileMentionSuggestion(
           if (mentionItemCountRef) mentionItemCountRef.current = props.items.length
           latestClientRect = props.clientRect
 
-          const { sessionEntries, workspaceEntries } = splitEntries(props.items)
-          const selectItem = (item: MentionSelection) => {
-            props.command({ id: resolveFileMentionPath(item, workspacePathRef.current), label: item.name })
-          }
-          renderer?.updateProps({
-            sessionEntries,
-            workspaceEntries,
-            pinnedEntry: latestPinned,
-            onSelect: selectItem,
-          })
+          renderer?.updateProps(listProps(props))
           anchorPopup()
         },
 
