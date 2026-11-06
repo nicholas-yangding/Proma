@@ -522,7 +522,16 @@ export function AgentSkillsView({
           onToggle={(enabled) => data.toggleSkill(selectedSkill.slug, enabled)}
           onUpdate={() => data.updateSkill(selectedSkill.slug)}
           onRequestDelete={() => setPendingDeleteSkill(selectedSkill)}
-          onOpenFolder={() => openSkillFolder(selectedSkill.slug)}
+          onOpenFolder={() => {
+            if (selectedSkill.source === 'project' && selectedSkill.sourcePath) {
+              void window.electronAPI.showItemInFolder(selectedSkill.sourcePath).catch((error) => {
+                console.error('[Agent 技能] 打开 Skill 目录失败:', error)
+                toast.error('打开 Skill 目录失败')
+              })
+              return
+            }
+            openSkillFolder(selectedSkill.slug)
+          }}
         />
         {skillDeleteDialog}
       </div>

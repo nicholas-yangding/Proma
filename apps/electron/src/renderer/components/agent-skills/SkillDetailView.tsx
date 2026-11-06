@@ -274,8 +274,16 @@ export function SkillDetailView({
         {/* 操作行 */}
         <div className="mt-3 flex items-center gap-2">
           <div className="flex items-center gap-2 mr-auto">
-            <Switch checked={skill.enabled} onCheckedChange={onToggle} />
-            <span className="text-xs text-muted-foreground">{skill.enabled ? '已启用' : '已禁用'}</span>
+            {skill.source === 'project' ? (
+              <span className="flex items-center gap-1 rounded-md bg-violet-500/10 px-1.5 py-0.5 text-[11px] font-medium text-violet-600 dark:text-violet-400">
+                项目只读 Skill
+              </span>
+            ) : (
+              <>
+                <Switch checked={skill.enabled} onCheckedChange={onToggle} />
+                <span className="text-xs text-muted-foreground">{skill.enabled ? '已启用' : '已禁用'}</span>
+              </>
+            )}
           </div>
           {skill.hasUpdate && (
             <Button size="sm" variant="outline" onClick={onUpdate} disabled={updating}>
@@ -291,7 +299,7 @@ export function SkillDetailView({
             </TooltipTrigger>
             <TooltipContent side="top">打开目录</TooltipContent>
           </Tooltip>
-          {!isBuiltin && (
+          {!isBuiltin && skill.source !== 'project' && (
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button

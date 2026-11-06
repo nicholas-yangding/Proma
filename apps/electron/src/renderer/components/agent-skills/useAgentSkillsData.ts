@@ -204,6 +204,13 @@ export function useAgentSkillsData(workspaceId?: string): AgentSkillsData {
   }, [workspaceSlug])
 
   const toggleSkill = React.useCallback(async (slug: string, enabled: boolean) => {
+    const target = skills.find((s) => s.slug === slug)
+    if (target?.source === 'project') {
+      toast.error(`「${target.name}」是项目根只读 Skill，不能在 Proma 内启停`, {
+        description: target.sourcePath,
+      })
+      return
+    }
     try {
       await window.electronAPI.toggleWorkspaceSkill(workspaceSlug, slug, enabled)
       setSkills((prev) => prev.map((s) => (s.slug === slug ? { ...s, enabled } : s)))
@@ -211,9 +218,16 @@ export function useAgentSkillsData(workspaceId?: string): AgentSkillsData {
       console.error('[Agent 技能] 切换 Skill 状态失败:', error)
       toast.error('切换 Skill 状态失败')
     }
-  }, [workspaceSlug])
+  }, [workspaceSlug, skills])
 
   const deleteSkill = React.useCallback(async (slug: string, name: string): Promise<boolean> => {
+    const target = skills.find((s) => s.slug === slug)
+    if (target?.source === 'project') {
+      toast.error(`「${name}」是项目根只读 Skill，不能在 Proma 内删除`, {
+        description: target.sourcePath,
+      })
+      return false
+    }
     try {
       await window.electronAPI.deleteWorkspaceSkill(workspaceSlug, slug)
       setSkills((prev) => prev.filter((s) => s.slug !== slug))
@@ -225,7 +239,7 @@ export function useAgentSkillsData(workspaceId?: string): AgentSkillsData {
       toast.error('删除 Skill 失败')
       return false
     }
-  }, [workspaceSlug, bumpCapabilitiesVersion])
+  }, [workspaceSlug, bumpCapabilitiesVersion, skills])
 
   const updateSkill = React.useCallback(async (slug: string) => {
     if (!workspaceSlug || updatingSkill) return

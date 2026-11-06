@@ -812,6 +812,7 @@ export function getWorkspaceCapabilities(workspaceSlug: string): WorkspaceCapabi
 }
 
 export function deleteWorkspaceSkill(workspaceSlug: string, skillSlug: string): void {
+  assertNotProjectSkill(getAllWorkspaceSkills(workspaceSlug), skillSlug)
   const skillsDir = getWorkspaceSkillsDir(workspaceSlug)
   const skillPath = join(skillsDir, skillSlug)
 
@@ -892,11 +893,58 @@ export function getDefaultSkillSlugs(): string[] {
 export function getAllWorkspaceSkills(workspaceSlug: string): SkillMeta[] {
   const activeSkills = scanSkillsInDir(getWorkspaceSkillsDir(workspaceSlug), true)
   const inactiveSkills = scanSkillsInDir(getInactiveSkillsDir(workspaceSlug), false)
-  return [...activeSkills, ...inactiveSkills]
+  const projectSkills = scanProjectSkillDirs(getAgentWorkspaceBySlug(workspaceSlug)?.projectRootPath)
+  return mergeWorkspaceSkillsWithProject([...activeSkills, ...inactiveSkills], projectSkills)
+}
+
+/** 项目根下作为只读 Skill 来源的点目录（顺序即优先级，先到先得） */
+export const PROJECT_SKILL_SOURCE_DIRS = ['.agents/skills', '.claude/skills'] as const
+
+/**
+ * 扫描项目根点目录中的 Skills（只读引用，恒为启用态）。
+ * 目录缺失或项目根未绑定时返回空数组；同名 slug 以靠前的来源目录为准。
+ */
+export function scanProjectSkillDirs(projectRootPath: string | undefined): SkillMeta[] {
+  if (!projectRootPath) return []
+  const skills: SkillMeta[] = []
+  const seen = new Set<string>()
+  for (const sourceDir of PROJECT_SKILL_SOURCE_DIRS) {
+    const absoluteSourceDir = join(projectRootPath, sourceDir)
+    for (const meta of scanSkillsInDir(absoluteSourceDir, true)) {
+      if (seen.has(meta.slug)) continue
+      seen.add(meta.slug)
+      skills.push({ ...meta, source: 'project', sourcePath: join(absoluteSourceDir, meta.slug) })
+    }
+  }
+  return skills
+}
+
+/** 合并受管 Skills 与项目只读 Skills：受管条目（含禁用）恒优先，项目条目按 slug 去重后追加在尾部 */
+export function mergeWorkspaceSkillsWithProject(workspaceSkills: SkillMeta[], projectSkills: SkillMeta[]): SkillMeta[] {
+  const seen = new Set(workspaceSkills.map((meta) => meta.slug))
+  return [...workspaceSkills, ...projectSkills.filter((meta) => !seen.has(meta.slug))]
+}
+
+/** 项目根只读 Skill 目录（仅返回磁盘上存在的，供 Agent 运行时 additionalSkillPaths 使用） */
+export function getExistingProjectSkillDirs(workspaceSlug: string): string[] {
+  const projectRootPath = getAgentWorkspaceBySlug(workspaceSlug)?.projectRootPath
+  if (!projectRootPath) return []
+  return PROJECT_SKILL_SOURCE_DIRS
+    .map((sourceDir) => join(projectRootPath, sourceDir))
+    .filter((dir) => existsSync(dir))
+}
+
+/** 项目只读 Skill 的统一拒绝文案（禁用/删除均不适用） */
+export function assertNotProjectSkill(skills: SkillMeta[], skillSlug: string): void {
+  const target = skills.find((meta) => meta.slug === skillSlug)
+  if (target?.source === 'project') {
+    throw new Error(`项目 Skill「${target.name}」是只读引用（${target.sourcePath ?? '项目根'}），请在项目根内直接修改；Proma 内不能禁用或删除`)
+  }
 }
 
 /** 在 skills/ 和 skills-inactive/ 之间移动来切换启用/禁用 */
 export function toggleWorkspaceSkill(workspaceSlug: string, skillSlug: string, enabled: boolean): void {
+  assertNotProjectSkill(getAllWorkspaceSkills(workspaceSlug), skillSlug)
   const activeDir = getWorkspaceSkillsDir(workspaceSlug)
   const inactiveDir = getInactiveSkillsDir(workspaceSlug)
 

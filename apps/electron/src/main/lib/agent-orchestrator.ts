@@ -51,7 +51,7 @@ import pkg from '../../../package.json' with { type: 'json' }
 import { getFetchFn } from './proxy-fetch'
 import { getEffectiveProxyUrl } from './proxy-settings-service'
 import { appendSDKMessages, updateAgentSessionMeta, getAgentSessionMeta, getAgentSessionMessages, removeSDKErrorMessage, updateSDKUserMessageSkillActivations, rewindPiAgentSession, resolveAgentCwd, getActiveWorktreePath, getAgentCwdMode, getSessionWorkbenchLayout, resolveSessionWorkbenchContextDir, isAgentSessionDeleting } from './agent-session-manager'
-import { getAgentWorkspace, getProjectFilesPath, getWorkspaceMcpConfig, getWorkspaceAttachedDirectories, getWorkspaceAttachedFiles, getWorkspaceAgentsMdPath, readWorkspaceAgentsMd, getWorkspaceMemoryGuidance, isWorkspaceProjectKnowledgeMaintenanceApproved } from './agent-workspace-manager'
+import { getAgentWorkspace, getProjectFilesPath, getWorkspaceMcpConfig, getWorkspaceAttachedDirectories, getWorkspaceAttachedFiles, getWorkspaceAgentsMdPath, readWorkspaceAgentsMd, getWorkspaceMemoryGuidance, isWorkspaceProjectKnowledgeMaintenanceApproved, getExistingProjectSkillDirs } from './agent-workspace-manager'
 import { getLocalProjectRootStatus } from './project-root-health'
 import { getMcpApiKeyEnvironment, getMcpOAuthHeaders } from './mcp-oauth-service'
 import { getAgentWorkspacePath, getAgentSessionWorkspacePath, getSdkConfigDir, getWorkspaceSkillsDir } from './config-paths'
@@ -1638,7 +1638,8 @@ export class AgentOrchestrator {
         piSessionDir: join(getSdkConfigDir(), 'sessions'),
         ...(allAdditionalDirectories.length > 0 && { additionalDirectories: allAdditionalDirectories }),
         ...(workspaceSlug ? {
-          additionalSkillPaths: [getWorkspaceSkillsDir(workspaceSlug)],
+          // 受管 skills/ 在前：同名 slug 的 alias 解析先命中受管版本，项目只读 Skill 仅作补充。
+          additionalSkillPaths: [getWorkspaceSkillsDir(workspaceSlug), ...getExistingProjectSkillDirs(workspaceSlug)],
           skillWorkspaceSlug: workspaceSlug,
         } : {}),
         ...(mentionedSkills?.length ? { skillMentions: mentionedSkills } : {}),

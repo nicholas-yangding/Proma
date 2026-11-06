@@ -1118,6 +1118,10 @@ export interface SkillMeta {
   icon?: string
   version?: string
   enabled: boolean
+  /** Skill 来源；缺省视为 workspace（Proma 受管目录），project 表示来自项目根点目录的只读引用 */
+  source?: 'workspace' | 'project'
+  /** source 为 project 时的绝对目录（如 <项目根>/.agents/skills/<slug>），供 UI 展示 */
+  sourcePath?: string
   /** 如果此 Skill 是从其他工作区导入的，则携带来源信息 */
   importSource?: SkillImportSource
   /** 是否有可用更新（源 Skill 版本 > importSource.sourceVersion） */
