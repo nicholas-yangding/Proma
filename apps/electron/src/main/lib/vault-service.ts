@@ -32,7 +32,7 @@ import { getDefaultVaultDir, getVaultConfigPath, resolveDefaultVaultDir } from '
 import { readJsonFileSafe, writeJsonFileAtomic, writeTextFileAtomic } from './safe-file'
 import { isValidImageBytes } from './image-content-validation'
 import { VAULT_MAX_EDIT_BYTES } from '@proma/shared'
-import { assertVaultRoot, getSafeVaultFolderTarget, getSafeVaultPath, getSafeVaultTarget, isWithinRoot, normalizeRelativeMarkdownPath, HIDDEN_DIRECTORY_PREFIX } from './vault-path-policy'
+import { assertVaultRoot, getSafeVaultFolderTarget, getSafeVaultPath, getSafeVaultTarget, isWithinRoot, normalizeRelativeMarkdownPath, isVisibleVaultPathSegment } from './vault-path-policy'
 
 const MAX_VAULT_FILES = 5_000
 const MAX_VAULT_FOLDERS = 1_000
@@ -191,7 +191,7 @@ export function createVaultFileSystem(rootPath: string): VaultFileSystem {
       }
 
       for (const entry of dirEntries) {
-        if (entry.name.startsWith(HIDDEN_DIRECTORY_PREFIX) || entry.isSymbolicLink()) continue
+        if (!isVisibleVaultPathSegment(entry.name) || entry.isSymbolicLink()) continue
         const absolutePath = join(currentDir, entry.name)
         if (entry.isDirectory()) {
           // Never emit a folder at the boundary depth: its children would not be

@@ -3,6 +3,17 @@ import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 export const HIDDEN_DIRECTORY_PREFIX = '.'
 
+/**
+ * 点开头目录白名单：这些目录下的 Markdown 允许在 Vault 列表、读写、搜索索引
+ * 与 Agent 引用（focus 等）中使用；`.obsidian`、`.git` 等其余点目录仍被排除。
+ */
+export const VISIBLE_DOT_DIRECTORY_NAMES = new Set(['.agents', '.claude'])
+
+/** 路径段放行规则：非点开头恒放行；点开头则必须在白名单内。 */
+export function isVisibleVaultPathSegment(segment: string): boolean {
+  return !segment.startsWith(HIDDEN_DIRECTORY_PREFIX) || VISIBLE_DOT_DIRECTORY_NAMES.has(segment)
+}
+
 function isWindowsAbsolutePath(value: string): boolean {
   return /^[A-Za-z]:[\\/]/.test(value) || value.startsWith('\\\\')
 }
@@ -17,7 +28,7 @@ export function normalizeRelativeMarkdownPath(value: string): string {
 
   const normalized = value.replace(/\\/g, '/').replace(/^\.\//, '')
   const parts = normalized.split('/')
-  if (parts.some((part) => !part || part === '.' || part === '..' || part.startsWith(HIDDEN_DIRECTORY_PREFIX))) {
+  if (parts.some((part) => !part || part === '.' || part === '..' || !isVisibleVaultPathSegment(part))) {
     throw new Error('Vault 路径不能包含隐藏目录、空段或上级目录')
   }
   if (!normalized.toLowerCase().endsWith('.md')) {
@@ -41,7 +52,7 @@ function normalizeRelativeVaultFolderPath(value: string): string {
     throw new Error('Vault 不接受绝对路径')
   }
   const parts = normalized.split('/')
-  if (parts.some((part) => !part || part === '.' || part === '..' || part.startsWith(HIDDEN_DIRECTORY_PREFIX))) {
+  if (parts.some((part) => !part || part === '.' || part === '..' || !isVisibleVaultPathSegment(part))) {
     throw new Error('Vault 文件夹路径不能包含隐藏目录、空段或上级目录')
   }
   return parts.join('/')

@@ -31,7 +31,7 @@ export interface VaultFileEntry {
   modifiedAt: number
 }
 
-/** A visible non-hidden directory within the authorized Vault root. */
+/** A directory within the authorized Vault root; dot-prefixed folders are visible only for the allow-listed names (`.agents`, `.claude`). */
 export interface VaultFolderEntry {
   kind: 'folder'
   relativePath: string

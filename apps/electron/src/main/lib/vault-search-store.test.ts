@@ -42,6 +42,27 @@ test('Given 已索引 Vault When 外部新增、原子覆盖、重命名和删�
   }
 }, 15_000)
 
+test('Given 白名单点目录中的 Skill 文档 When 初始化索引 Then 文档被检索且其余点目录仍排除', async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'proma-vault-allowlist-')))
+  mkdirSync(join(root, '.agents', 'proma'), { recursive: true })
+  writeFileSync(join(root, '.agents', 'proma', 'SKILL.md'), '技能文档关键词')
+  mkdirSync(join(root, '.claude', 'commands'), { recursive: true })
+  writeFileSync(join(root, '.claude', 'commands', 'foo.md'), '命令文档关键词')
+  mkdirSync(join(root, '.obsidian'))
+  writeFileSync(join(root, '.obsidian', 'private.md'), '隐藏秘密')
+  const store = new VaultSearchStore(root, () => {})
+  try {
+    await until(() => store.progress.phase === 'ready')
+    expect(store.progress).toMatchObject({ indexedFiles: 2, skippedFiles: 0 })
+    expect(store.search('技能文档关键词').hits[0]).toMatchObject({ relativePath: '.agents/proma/SKILL.md' })
+    expect(store.search('命令文档关键词').hits[0]).toMatchObject({ relativePath: '.claude/commands/foo.md' })
+    expect(store.search('隐藏秘密').totalMatches).toBe(0)
+  } finally {
+    await store.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+}, 15_000)
+
 test('Given 隐藏笔记、库外软链接和大文件 When 初始化索引 Then 只检索授权 Markdown 并报告省略数量', async () => {
   const parent = realpathSync(mkdtempSync(join(tmpdir(), 'proma-vault-boundary-')))
   const root = join(parent, 'vault')

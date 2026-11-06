@@ -3,7 +3,7 @@ import { relative, sep } from 'node:path'
 import { watch } from 'chokidar'
 import type { FSWatcher } from 'chokidar'
 import type { VaultSearchResponse, VaultSearchStatus } from '@proma/shared'
-import { getSafeVaultTarget, isWithinRoot, HIDDEN_DIRECTORY_PREFIX } from './vault-path-policy'
+import { getSafeVaultTarget, isWithinRoot, isVisibleVaultPathSegment } from './vault-path-policy'
 import { VaultTextIndex } from './vault-search-index'
 import type { IndexedVaultNote } from './vault-search-index'
 
@@ -66,7 +66,7 @@ export class VaultSearchStore {
       ignored: (path, stats) => {
         if (!isWithinRoot(root, path)) return true
         const name = relative(root, path)
-        return name.split(sep).some((part) => part.startsWith(HIDDEN_DIRECTORY_PREFIX))
+        return name.split(sep).some((part) => !isVisibleVaultPathSegment(part))
           || !!(stats?.isFile() && !name.toLowerCase().endsWith('.md'))
       },
     })
