@@ -13,6 +13,7 @@ Proma 是一个本地优先的 Electron AI 桌面 Agent。仓库是 Bun monorepo
 - 修改 JSON 配置或会话元数据时，使用 `apps/electron/src/main/lib/safe-file.ts` 的原子写封装；不要直接 `writeFileSync`。
 - 功能改动应有 BDD 风格的可执行测试，至少覆盖正常路径和主要边界。
 - 改动 UI 时复用既有 Radix/shadcn primitives 与主题变量；重视空状态、键盘操作、加载态和深浅主题。
+- 一组代码修改完整结束后，主动确保 dev 产物已更新，不要改完源码就结束回合：dev 链在跑时确认 esbuild watcher 已重建受影响的 `dist/*.cjs`（electronmon 监视 `main.cjs`/`preload.cjs` 会自动重启，renderer 由 Vite HMR 热更）；dev 链未在跑时，在 `apps/electron` 内执行对应的 bundle 脚本（如 `bun run build:main`、`bun run build:preload`）重建产物，或按需拉起 `bun run dev`。
 
 ## 常用命令
 
@@ -25,6 +26,13 @@ bun run build
 bun run electron:build
 bun run typecheck
 bun test
+
+# 重建 dev 产物（apps/electron 内，dev 链未在跑时按改动面选用）
+bun run build:main
+bun run build:agent-runtime
+bun run build:terminal-runtime
+bun run build:preload
+bun run build:renderer
 
 # 打包（apps/electron 内）
 bun run dist:mac
