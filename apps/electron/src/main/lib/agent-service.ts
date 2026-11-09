@@ -15,7 +15,8 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { mkdir as mkdirAsync, writeFile as writeFileAsync } from 'node:fs/promises'
 import { BrowserWindow } from 'electron'
 import type { WebContents } from 'electron'
-import type { ToolDefinition } from '@earendil-works/pi-coding-agent'
+import type { AgentRunExtensions } from './agent-run-extensions'
+export type { AgentRunExtensions } from './agent-run-extensions'
 import { AGENT_IPC_CHANNELS, MAX_ATTACHMENT_SIZE } from '@proma/shared'
 import type {
   AgentSendInput,
@@ -257,10 +258,6 @@ export function setVisibleAgentSession(webContents: WebContents, sessionId: stri
 
 /** 仅主进程内部使用的单次运行扩展，绝不经 IPC 序列化。 */
 type AgentRunInput = AgentSendInput & { runGeneration?: number }
-
-export interface AgentRunExtensions {
-  piCustomTools?: ToolDefinition[]
-}
 
 /**
  * 运行 Agent 并流式推送事件到渲染进程

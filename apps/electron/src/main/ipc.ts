@@ -6,6 +6,7 @@
 
 import { ipcMain, nativeTheme, shell, dialog, BrowserWindow, app, clipboard, nativeImage } from 'electron'
 import type { WebContents } from 'electron'
+import { registerBotsIpcHandlers } from './lib/bots-ipc'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { existsSync, realpathSync, readFileSync, writeFileSync, mkdirSync, statSync } from 'node:fs'
 import { realpath, stat, writeFile } from 'node:fs/promises'
@@ -1434,6 +1435,19 @@ export function registerIpcHandlers(): void {
       throw new Error('仅主窗口可以访问 Slack Bot 设置。')
     }
   }
+  registerBotsIpcHandlers({
+    assertRenderer: assertMainTerminalRenderer,
+    getWindow: getMainWindow,
+    resolveFileReference: (file, sessionIds) => {
+      const path = realpathSync(file.path)
+      const info = statSync(path)
+      const sourceSessionId = sessionIds.find((sessionId) => file.isDirectory
+        ? info.isDirectory() && isExplicitPreviewDirectoryPath(path, { sessionId })
+        : info.isFile() && isExplicitPreviewFilePath(path, { sessionId }))
+      if (!sourceSessionId) throw new Error('文件引用不属于此聊天的项目或成员工作区。')
+      return { ...file, path, sourceSessionId }
+    },
+  })
   ipcMain.handle(TERMINAL_IPC_CHANNELS.CREATE, async (event, input) => {
     assertMainTerminalRenderer(event.sender.id)
     if (!input.sessionId || !getAgentSessionMeta(input.sessionId)) {

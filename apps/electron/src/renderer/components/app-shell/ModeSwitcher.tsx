@@ -16,15 +16,22 @@ import { agentSessionsAtom, currentAgentSessionIdAtom } from '@/atoms/agent-atom
 import { tabsAtom } from '@/atoms/tab-atoms'
 import { useOpenSession } from '@/hooks/useOpenSession'
 import { Bot, MessageSquare } from 'lucide-react'
+import { Users } from 'lucide-react'
+import { activeViewAtom } from '@/atoms/active-view'
+import { sidebarCollapsedAtom } from '@/atoms/tab-atoms'
+import { useSetAtom } from 'jotai'
 import { cn } from '@/lib/utils'
 
 const modes: { value: AppMode; label: string; icon: React.ReactNode }[] = [
   { value: 'agent', label: 'Agent', icon: <Bot size={15} /> },
   { value: 'chat', label: 'Chat', icon: <MessageSquare size={15} /> },
+  { value: 'bots', label: 'Bots', icon: <Users size={15} /> },
 ]
 
 export function ModeSwitcher(): React.ReactElement {
   const [mode, setMode] = useAtom(appModeAtom)
+  const setActiveView = useSetAtom(activeViewAtom)
+  const setSidebarCollapsed = useSetAtom(sidebarCollapsedAtom)
   const openSession = useOpenSession()
   const conversations = useAtomValue(conversationsAtom)
   const agentSessions = useAtomValue(agentSessionsAtom)
@@ -33,9 +40,9 @@ export function ModeSwitcher(): React.ReactElement {
   const tabs = useAtomValue(tabsAtom)
 
   /** 尝试恢复目标模式下的上一个对话/会话，按优先级 fallback */
-  const restoreSession = React.useCallback((targetMode: AppMode) => {
+  const restoreSession = React.useCallback((targetMode: Exclude<AppMode, 'bots'>) => {
     const isChatMode = targetMode === 'chat'
-    const sessions = isChatMode ? conversations : agentSessions
+    const sessions = isChatMode ? conversations : agentSessions.filter((session) => !session.botContext)
     const lastId = isChatMode ? currentConversationId : currentAgentSessionId
 
     // 1. 上次选中的对话仍存在 → 恢复
@@ -64,8 +71,14 @@ export function ModeSwitcher(): React.ReactElement {
 
   const handleModeSwitch = React.useCallback((targetMode: AppMode) => {
     if (targetMode === mode) return
+    setMode(targetMode)
+    setActiveView('conversations')
+    if (targetMode === 'bots') {
+      setSidebarCollapsed(false)
+      return
+    }
     restoreSession(targetMode)
-  }, [mode, restoreSession])
+  }, [mode, restoreSession, setMode, setActiveView, setSidebarCollapsed])
 
   return (
     <div className="pt-2 titlebar-drag-region select-none">
@@ -75,9 +88,9 @@ export function ModeSwitcher(): React.ReactElement {
         {/* 滑动背景指示器 */}
         <div
           className={cn(
-            'mode-slider pointer-events-none absolute top-1 bottom-1 w-[calc(50%-4px)] rounded-lg bg-background shadow-sm transition-transform duration-300 ease-in-out',
-            mode === 'agent' ? 'translate-x-0' : 'translate-x-full'
+            'mode-slider pointer-events-none absolute top-1 bottom-1 rounded-lg bg-background shadow-sm transition-transform duration-300 ease-in-out'
           )}
+          style={{ width: `calc((100% - 8px) / ${modes.length})`, transform: `translateX(${Math.max(0, modes.findIndex((item) => item.value === mode)) * 100}%)` }}
         />
         {modes.map(({ value, label, icon }) => (
           <button
@@ -85,7 +98,7 @@ export function ModeSwitcher(): React.ReactElement {
             type="button"
             onClick={() => handleModeSwitch(value)}
             className={cn(
-              'mode-btn titlebar-no-drag relative z-[1] h-8 flex-1 flex items-center justify-center gap-1.5 rounded-lg px-3 py-0 text-sm font-medium transition-colors duration-200 select-none',
+              'mode-btn titlebar-no-drag relative z-[1] h-8 flex-1 flex items-center justify-center gap-1 rounded-lg px-2 py-0 text-xs font-medium transition-colors duration-200 select-none',
               mode === value
                 ? 'mode-btn-selected text-foreground'
                 : 'text-muted-foreground hover:text-foreground'

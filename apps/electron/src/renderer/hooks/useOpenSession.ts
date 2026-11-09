@@ -17,6 +17,7 @@ import {
 } from '@/atoms/tab-atoms'
 import { previewFileMapAtom } from '@/atoms/preview-atoms'
 import { appModeAtom } from '@/atoms/app-mode'
+import { botsActiveConversationIdAtom } from '@/atoms/bot-atoms'
 import { activeViewAtom } from '@/atoms/active-view'
 import { automationFormAtom } from '@/atoms/automation-atoms'
 import { currentConversationIdAtom } from '@/atoms/chat-atoms'
@@ -65,6 +66,18 @@ export function useOpenSession(): OpenSessionFn {
         return
       }
       setSettingsOpen(false)
+
+      const botContext = (type === 'agent' || type === 'preview')
+        ? store.get(agentSessionsAtom).find((session) => session.id === sessionId)?.botContext
+        : undefined
+      if (botContext) {
+        store.set(botsActiveConversationIdAtom, botContext.conversationId)
+        setAppMode('bots')
+        setActiveView('conversations')
+        setAutomationForm({ open: false, draft: null })
+        options?.onOpened?.()
+        return
+      }
 
       // 切回 agent 会话时，若该会话上次开着预览 Tab 则一并重建并回到上次视图
       const restore = type === 'agent'

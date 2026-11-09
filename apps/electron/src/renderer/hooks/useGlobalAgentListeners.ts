@@ -689,6 +689,7 @@ export function useGlobalAgentListeners(): void {
     }
 
     const activateExternalAgentRun = (event: Extract<PromaEvent, { type: 'external_run_started' }>): void => {
+      if (event.source === 'bots') return
       const applyActivation = (sessions: AgentSessionMeta[]): void => {
         const currentStreamState = store.get(agentStreamingStatesAtom).get(event.sessionId)
         if (!shouldActivateExternalAgentRun(currentStreamState, event.startedAt, event.runGeneration)) {

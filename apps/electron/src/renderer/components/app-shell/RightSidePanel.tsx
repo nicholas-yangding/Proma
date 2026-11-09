@@ -10,8 +10,6 @@ import * as React from 'react'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { appModeAtom } from '@/atoms/app-mode'
 import {
-  currentAgentSessionIdAtom,
-  currentSessionSidePanelOpenAtom,
   agentSessionPathMapAtom,
   agentDiffPanelTabAtom,
   agentTerminalTabsAtom,
@@ -21,17 +19,21 @@ import {
 } from '@/atoms/agent-atoms'
 import type { AgentSidePanelTab } from '@/atoms/agent-atoms'
 import { SidePanel } from '@/components/agent/SidePanel'
+import { workspaceSessionIdAtom } from '@/atoms/workspace-session'
+import { botsActiveConversationAtom } from '@/atoms/bot-atoms'
+import { agentSidePanelOpenAtomFamily } from '@/atoms/agent-atoms'
 import { browserFocusRequestMapAtom, browserPanelOpenMapAtom, browserStateMapAtom } from '@/atoms/browser-atoms'
 import { getPreviewFileId, previewFileMapAtom } from '@/atoms/preview-atoms'
 
 export function RightSidePanel({ width }: { width?: number }): React.ReactElement | null {
   const appMode = useAtomValue(appModeAtom)
-  const currentSessionId = useAtomValue(currentAgentSessionIdAtom)
+  const botConversation = useAtomValue(botsActiveConversationAtom)
+  const currentSessionId = useAtomValue(workspaceSessionIdAtom)
   const sessionPathMap = useAtomValue(agentSessionPathMapAtom)
   const diffPanelTabMap = useAtomValue(agentDiffPanelTabAtom)
   const setDiffPanelTabMap = useSetAtom(agentDiffPanelTabAtom)
   const setTerminalTabsMap = useSetAtom(agentTerminalTabsAtom)
-  const setSidePanelOpen = useSetAtom(currentSessionSidePanelOpenAtom)
+  const setSidePanelOpen = useSetAtom(agentSidePanelOpenAtomFamily(currentSessionId ?? ''))
   const browserOpenMap = useAtomValue(browserPanelOpenMapAtom)
   const browserStateMap = useAtomValue(browserStateMapAtom)
   const browserFocusRequestMap = useAtomValue(browserFocusRequestMapAtom)
@@ -133,7 +135,7 @@ export function RightSidePanel({ width }: { width?: number }): React.ReactElemen
     pendingBrowserActivationRef.current = null
   }, [browserFocusRequestTabId, browserOpen, browserState?.activeTabId, browserState?.tabs, currentSessionId, setBrowserFocusRequestMap, setDiffPanelTabMap, setSidePanelOpen])
 
-  if (appMode !== 'agent' || !currentSessionId) {
+  if ((appMode !== 'agent' && appMode !== 'bots') || !currentSessionId) {
     return null
   }
 
@@ -153,6 +155,7 @@ export function RightSidePanel({ width }: { width?: number }): React.ReactElemen
       activeTab={activeTab}
       onTabChange={setActiveTab}
       width={width}
+      workspaceId={appMode === 'bots' ? botConversation?.conversation.workspaceId : undefined}
     />
   )
 }

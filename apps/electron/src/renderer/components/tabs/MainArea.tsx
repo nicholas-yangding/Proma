@@ -6,6 +6,9 @@
  */
 
 import * as React from 'react'
+import { appModeAtom } from '@/atoms/app-mode'
+import { workspaceSessionIdAtom } from '@/atoms/workspace-session'
+import { BotsView } from '@/components/bots/BotsView'
 import type { BrowserStateChange, BrowserTabFocusChange } from '@proma/shared'
 import { useAtom, useAtomValue, useSetAtom, useStore } from 'jotai'
 import {
@@ -40,6 +43,8 @@ import {
 
 export function MainArea(): React.ReactElement {
   useTrackSessionView()
+  const appMode = useAtomValue(appModeAtom)
+  const workspaceSessionId = useAtomValue(workspaceSessionIdAtom)
 
   const tabs = useAtomValue(tabsAtom)
   const activeTabId = useAtomValue(activeTabIdAtom)
@@ -54,11 +59,11 @@ export function MainArea(): React.ReactElement {
   const contentTabId = activeTab?.type === 'agent' ? activeTabId : deferredActiveTabId
   // Agent 会话从左侧历史列表切换，中心区不再重复展示同一组顶部 Tab。
   const showCenterTabBar = activeTab?.type !== 'agent'
-  const [isRightPanelOpen, setRightPanelOpen] = useAtom(currentSessionSidePanelOpenAtom)
+  const [isRightPanelOpen, setRightPanelOpen] = useAtom(agentSidePanelOpenAtomFamily(workspaceSessionId ?? ''))
   const toggleRightPanel = React.useCallback(() => {
-    if (activeTab?.type !== 'agent') return
+    if (!workspaceSessionId) return
     setRightPanelOpen(!isRightPanelOpen)
-  }, [activeTab?.type, isRightPanelOpen, setRightPanelOpen])
+  }, [workspaceSessionId, isRightPanelOpen, setRightPanelOpen])
 
   // 不能依赖 TabBar 注册：Agent 会话已不渲染中心 TabBar，快捷键需要在常驻主内容区监听。
   React.useEffect(() => registerShortcut('toggle-right-panel', toggleRightPanel), [toggleRightPanel])
@@ -150,7 +155,7 @@ export function MainArea(): React.ReactElement {
     <Panel variant="grow" className="bg-content-area">
       <div className="flex flex-1 min-h-0 overflow-hidden">
         <div className="flex flex-1 flex-col min-w-0 h-full">
-          {activeView === 'planning' ? (
+          {appMode === 'bots' ? <BotsView /> : activeView === 'planning' ? (
             automationFormOpen ? <AutomationFormView /> : <PlanningView />
           ) : activeView === 'agent-skills' ? (
             <AgentSkillsView />

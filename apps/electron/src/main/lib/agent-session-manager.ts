@@ -399,7 +399,7 @@ type AgentDelegationSessionMetadata = Pick<AgentSessionMeta,
   | 'parentSessionId' | 'rootSessionId' | 'sourceDelegationId' | 'sourceAutomationId'
   | 'delegationRole' | 'delegationStatus' | 'delegationDepth' | 'delegationGoal'
   | 'delegationAlias' | 'delegationReadOnly' | 'sourceDelegationUserMessageUuid'
-  | 'permissionMode' | 'reasoningLevel' | 'activeWorktree'
+  | 'permissionMode' | 'reasoningLevel' | 'activeWorktree' | 'botContext'
 >
 
 export function createAgentSession(

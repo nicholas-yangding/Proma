@@ -12,6 +12,8 @@
 import { useEffect, useCallback } from 'react'
 import { useAtomValue, useSetAtom, useAtom, useStore } from 'jotai'
 import { appModeAtom } from '@/atoms/app-mode'
+import { botsActiveConversationAtom, botsActiveConversationIdAtom, botsDialogAtom } from '@/atoms/bot-atoms'
+import { workspaceSessionIdAtom } from '@/atoms/workspace-session'
 import { settingsOpenAtom, channelFormDirtyAtom, settingsCloseRequestedAtom } from '@/atoms/settings-tab'
 import { searchDialogOpenAtom } from '@/atoms/search-atoms'
 import {
@@ -73,6 +75,7 @@ import {
  * 挂载后从 settings 加载自定义配置，并注册所有应用级快捷键。
  */
 export function GlobalShortcuts(): null {
+  const store = useStore()
   const [appMode, setAppMode] = useAtom(appModeAtom)
   const [settingsOpen, setSettingsOpen] = useAtom(settingsOpenAtom)
   const channelFormDirty = useAtomValue(channelFormDirtyAtom)
@@ -88,6 +91,7 @@ export function GlobalShortcuts(): null {
   // Tab 管理（用于关闭标签页）
   const activeTabId = useAtomValue(activeTabIdAtom)
   const activeTab = useAtomValue(activeTabAtom)
+  const botsWorkspaceSessionId = useAtomValue(workspaceSessionIdAtom)
   const activeAgentSidePanelTab = useAtomValue(agentDiffPanelTabAtom).get(activeTab?.type === 'agent' ? activeTab.sessionId : '')
   const activeAgentSessionId = activeTab?.type === 'agent' ? activeTab.sessionId : ''
   const activeDelegationSessionId = useAtomValue(agentSideDelegationMapAtom).get(activeAgentSessionId) ?? null
@@ -139,6 +143,10 @@ export function GlobalShortcuts(): null {
       return
     }
 
+    if (appMode === 'bots') {
+      if (botsWorkspaceSessionId) window.dispatchEvent(new CustomEvent(CLOSE_ACTIVE_RIGHT_WORKSPACE_TAB_EVENT, { detail: { sessionId: botsWorkspaceSessionId } }))
+      return
+    }
     if (activeTab?.type === 'agent') {
       // Agent 会话常驻左侧历史，不再由 Cmd+W 关闭；仅关闭右侧可关闭工作区 Tab。
       if (
@@ -155,7 +163,7 @@ export function GlobalShortcuts(): null {
 
     if (!activeTabId) return
     requestClose(activeTabId)
-  }, [shortcutGuideOpen, setShortcutGuideOpen, settingsOpen, setSettingsOpen, channelFormDirty, setSettingsCloseRequested, searchOpen, setSearchOpen, activeTab, activeAgentSidePanelTab, isActiveAgentSidePanelOpen, activeTabId, requestClose])
+  }, [shortcutGuideOpen, setShortcutGuideOpen, settingsOpen, setSettingsOpen, channelFormDirty, setSettingsCloseRequested, searchOpen, setSearchOpen, activeTab, activeAgentSidePanelTab, isActiveAgentSidePanelOpen, activeTabId, requestClose, appMode, botsWorkspaceSessionId])
 
   // 监听菜单 IPC 事件（Cmd+W 被 Electron 菜单拦截后通过 IPC 转发）
   useEffect(() => {
@@ -177,19 +185,25 @@ export function GlobalShortcuts(): null {
   // Cmd+K / Ctrl+K → 全局搜索
   useShortcut(
     'global-search',
-    useCallback(() => setSearchOpen(true), [setSearchOpen]),
+    useCallback(() => {
+      if (appMode === 'bots') document.querySelector<HTMLInputElement>('[aria-label="搜索 Bot 聊天"]')?.focus()
+      else setSearchOpen(true)
+    }, [appMode, setSearchOpen]),
   )
 
   // Cmd+N → 新建对话/会话（根据当前模式）
   useShortcut(
     'new-session',
     useCallback(() => {
-      if (appMode === 'agent') {
+      if (appMode === 'bots') {
+        const conversation = store.get(botsActiveConversationAtom)?.conversation
+        store.set(botsDialogAtom, conversation?.kind === 'direct' ? { kind: 'topic', botId: conversation.botId } : { kind: 'manage' })
+      } else if (appMode === 'agent') {
         createAgent({ draft: true })
       } else {
         createChat({ draft: true })
       }
-    }, [appMode, createAgent, createChat]),
+    }, [appMode, createAgent, createChat, store]),
   )
 
   // Cmd+B → 切换侧边栏
@@ -205,8 +219,13 @@ export function GlobalShortcuts(): null {
   useShortcut(
     'toggle-mode',
     useCallback(
-      () => setAppMode(appMode === 'chat' ? 'agent' : 'chat'),
-      [appMode, setAppMode],
+      () => {
+        const modes = ['agent', 'chat', 'bots'] as const
+        setAppMode(modes[(modes.indexOf(appMode) + 1) % modes.length]!)
+        store.set(activeViewAtom, 'conversations')
+        if (appMode === 'chat') setSidebarCollapsed(false)
+      },
+      [appMode, setAppMode, setSidebarCollapsed, store],
     ),
   )
 
@@ -214,16 +233,25 @@ export function GlobalShortcuts(): null {
   useShortcut(
     'clear-context',
     useCallback(() => {
+      if (appMode === 'bots') {
+        const conversation = store.get(botsActiveConversationAtom)?.conversation
+        if (conversation?.kind === 'direct') store.set(botsDialogAtom, { kind: 'topic', botId: conversation.botId })
+        return
+      }
       window.dispatchEvent(new CustomEvent('proma:clear-context'))
-    }, []),
+    }, [appMode, store]),
   )
 
   // Cmd+L → 聚焦输入框（通过 CustomEvent 分发到 ChatInput/AgentView）
   useShortcut(
     'focus-input',
     useCallback(() => {
+      if (appMode === 'bots') {
+        document.querySelector<HTMLTextAreaElement>('[data-testid="bot-message-input"]')?.focus()
+        return
+      }
       window.dispatchEvent(new CustomEvent('proma:focus-input'))
-    }, []),
+    }, [appMode]),
   )
 
   // Cmd+Shift+Backspace → 停止最近交互的会话。只有 delegated child 需要额外校验，
@@ -231,6 +259,11 @@ export function GlobalShortcuts(): null {
   useShortcut(
     'stop-generation',
     useCallback(() => {
+      if (appMode === 'bots') {
+        const conversationId = store.get(botsActiveConversationIdAtom)
+        if (conversationId) void window.electronAPI.stopBotRun({ conversationId }).catch(console.error)
+        return
+      }
       const lastTarget = getLastInteractedStopTarget()
       const lastTargetIsDelegated = lastTarget?.kind === 'agent'
         && agentSessions.some((session) => session.id === lastTarget.sessionId && !!session.sourceDelegationId)
@@ -252,12 +285,10 @@ export function GlobalShortcuts(): null {
       if (target) {
         window.dispatchEvent(new CustomEvent('proma:stop-generation', { detail: target }))
       }
-    }, [activeAgentSidePanelSplit, activeAgentSidePanelTab, activeDelegationSessionId, activeTab, agentSessions, isActiveAgentSidePanelOpen]),
+    }, [activeAgentSidePanelSplit, activeAgentSidePanelTab, activeDelegationSessionId, activeTab, agentSessions, isActiveAgentSidePanelOpen, appMode, store]),
   )
 
   // ===== 快速任务窗口 → 创建会话并自动发送 =====
-
-  const store = useStore()
 
   useEffect(() => {
     const cleanup = window.electronAPI.onQuickTaskOpenSession(async (data) => {

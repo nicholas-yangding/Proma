@@ -9,6 +9,10 @@
 import * as React from 'react'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { LeftSidebar } from './LeftSidebar'
+import { BotsSidebar } from '@/components/bots/BotsSidebar'
+import { useBotsEvents } from '@/components/bots/useBotsEvents'
+import { workspaceSessionIdAtom } from '@/atoms/workspace-session'
+import { agentSidePanelOpenAtomFamily } from '@/atoms/agent-atoms'
 import { RightSidePanel } from './RightSidePanel'
 import { MainArea } from '@/components/tabs/MainArea'
 import { appModeAtom } from '@/atoms/app-mode'
@@ -72,15 +76,16 @@ function clampLeftSidebarWidth(width: number): number {
 }
 
 export function AppShell(): React.ReactElement {
+  useBotsEvents()
   const appMode = useAtomValue(appModeAtom)
   const { workspaces, currentWorkspaceId } = useProjectActions()
   const currentWorkspace = workspaces.find((workspace) => workspace.id === currentWorkspaceId)
-  const currentSessionId = useAtomValue(currentAgentSessionIdAtom)
+  const currentSessionId = useAtomValue(workspaceSessionIdAtom)
   const activeRightPanelTab = useAtomValue(agentDiffPanelTabAtom).get(currentSessionId ?? '')
   const setAgentDiffPanelTabs = useSetAtom(agentDiffPanelTabAtom)
   const setAgentSessionComponentOpenMap = useSetAtom(agentSessionComponentOpenMapAtom)
   const activeRightPanelSplit = useAtomValue(agentSidePanelSplitMapAtom).get(currentSessionId ?? '') ?? null
-  const isPanelOpen = useAtomValue(currentSessionSidePanelOpenAtom)
+  const isPanelOpen = useAtomValue(agentSidePanelOpenAtomFamily(currentSessionId ?? ''))
   const workspacePosition = useAtomValue(agentWorkspacePositionAtom)
   const automationForm = useAtomValue(automationFormAtom)
   const settingsOpen = useAtomValue(settingsOpenAtom)
@@ -124,7 +129,7 @@ export function AppShell(): React.ReactElement {
       return changed ? next : previous
     })
   }, [activeView, productivityTools.calendarEnabled, productivityTools.obsidianEnabled, productivityTools.todosEnabled, setActiveView, setAgentDiffPanelTabs, setAgentSessionComponentOpenMap])
-  const showRightPanel = appMode === 'agent' && !!currentSessionId && !(automationForm.open && activeView !== 'conversations') && activeView !== 'planning' && activeView !== 'agent-skills'
+  const showRightPanel = (appMode === 'agent' || appMode === 'bots') && !!currentSessionId && !(automationForm.open && activeView !== 'conversations') && activeView !== 'planning' && activeView !== 'agent-skills'
   const workspaceCentered = workspacePosition === 'center' && showRightPanel && isPanelOpen && activeView === 'conversations'
   const isWindows = React.useMemo(() => detectIsWindows(), [])
 
@@ -389,7 +394,9 @@ export function AppShell(): React.ReactElement {
         >
             {/* 左侧边栏：可折叠，可拖拽调整宽度 */}
             <div id="app-session-sidebar" className="relative z-[60] crt-sidebar">
-              <LeftSidebar width={clampedLeftSidebarWidth} noTransition={isDraggingLeftSidebar} />
+              {appMode === 'bots'
+                ? <BotsSidebar width={clampedLeftSidebarWidth} />
+                : <LeftSidebar width={clampedLeftSidebarWidth} noTransition={isDraggingLeftSidebar} />}
               {/* 侧边栏展开时显示拖拽手柄，折叠态隐藏 */}
               {!sidebarCollapsed && (
                 <div

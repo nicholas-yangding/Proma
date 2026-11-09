@@ -1,8 +1,18 @@
 import { describe, expect, test } from 'bun:test'
 import {
+  buildAgentSessionTrees,
   reduceCollapsedRailPopoverState,
   type CollapsedRailPopoverState,
 } from '@/lib/collapsed-agent-rail'
+
+describe('Bots 私有执行会话', () => {
+  test('given 普通会话与 Bot 执行会话 when 构建 Agent 列表 then 只展示普通会话', () => {
+    const normal = { id: 'normal', title: '普通会话', createdAt: 1, updatedAt: 1 }
+    const bot = { id: 'bot-session', title: '研究员', createdAt: 1, updatedAt: 2,
+      botContext: { conversationId: 'room', botId: 'researcher', membershipStartedAfterSeq: 0 } }
+    expect(buildAgentSessionTrees([normal, bot]).map((item) => item.session.id)).toEqual(['normal'])
+  })
+})
 
 describe('折叠态 Rail Popover 状态', () => {
   const openState: CollapsedRailPopoverState = {

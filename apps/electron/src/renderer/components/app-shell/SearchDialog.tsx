@@ -234,7 +234,8 @@ export function SearchDialog(): React.ReactElement {
   const sessionHoverPreviewEnabled = useAtomValue(sessionHoverPreviewEnabledAtom)
   const agentWorkspaces = useAtomValue(agentWorkspacesAtom)
   const channels = useAtomValue(channelsAtom)
-  const appMode = useAtomValue(appModeAtom)
+  const selectedMode = useAtomValue(appModeAtom)
+  const appMode = selectedMode === 'chat' ? 'chat' : 'agent'
   const currentAgentSessionId = useAtomValue(currentAgentSessionIdAtom)
   const vaultEnabled = useAtomValue(productivityToolsAtom).obsidianEnabled
   const openWorkspaceComponent = useSetAtom(openWorkspaceComponentAtom)

@@ -995,7 +995,7 @@ function FileTreeItem({
                     }])}
                   >
                     <MessageSquarePlus />
-                    引用到 Agent
+                    引用到聊天
                   </DropdownMenuItem>
                 )}
                 {onAddToChat && !entry.isDirectory && menuSelectedCount === 1 && (

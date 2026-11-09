@@ -28,6 +28,7 @@ function getGreeting(hour: number): string {
 const MODE_CONFIG: Record<AppMode, { icon: React.ReactNode; label: string }> = {
   chat: { icon: <MessageSquare size={15} />, label: 'Chat' },
   agent: { icon: <Bot size={15} />, label: 'Agent' },
+  bots: { icon: <Bot size={15} />, label: 'Bots' },
 }
 
 export function WelcomeEmptyState(): React.ReactElement {

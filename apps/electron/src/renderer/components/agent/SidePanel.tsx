@@ -32,7 +32,7 @@ import { AgentView } from '@/components/agent/AgentView'
 import { VaultView } from '@/components/vault/VaultView'
 import { OBSIDIAN_NAME, ObsidianIcon } from '@/components/obsidian/obsidian-brand'
 import {
-  currentSessionSidePanelOpenAtom,
+  agentSidePanelOpenAtomFamily,
   agentFileSourceFilterMapAtom,
   workspaceFilesVersionAtom,
   currentAgentWorkspaceIdAtom,
@@ -458,9 +458,10 @@ interface SidePanelProps {
   activeTab: AgentSidePanelTab
   onTabChange: (tab: AgentSidePanelTab) => void
   width?: number
+  workspaceId?: string
 }
 
-export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, width = 460 }: SidePanelProps): React.ReactElement {
+export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, width = 460, workspaceId }: SidePanelProps): React.ReactElement {
   // 按会话保存最近访问顺序。该历史仅存在于当前 renderer 进程，避免恢复失效的临时 Tab。
   const rightPanelTabHistoryRef = React.useRef(new Map<string, AgentSidePanelTab[]>())
   const workspaceTabsRef = React.useRef<WorkspacePanelTab[]>([])
@@ -487,7 +488,7 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
   }, [activeTab, getPreviousTabBeforeClose, onTabChange])
 
   // 侧面板状态按 sessionId 持久化，切换会话不会互相覆盖。
-  const [isOpen, setIsOpen] = useAtom(currentSessionSidePanelOpenAtom)
+  const [isOpen, setIsOpen] = useAtom(agentSidePanelOpenAtomFamily(sessionId))
   // Tab 系统
   const previewFileMap = useAtomValue(previewFileMapAtom)
   const setPreviewFileMap = useSetAtom(previewFileMapAtom)
@@ -562,7 +563,7 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
   const selectedWorkspaceId = useAtomValue(currentAgentWorkspaceIdAtom)
   const workspaces = useAtomValue(agentWorkspacesAtom)
   const sessions = useAtomValue(agentSessionsAtom)
-  const currentWorkspaceId = sessions.find((session) => session.id === sessionId)?.workspaceId ?? selectedWorkspaceId
+  const currentWorkspaceId = workspaceId ?? sessions.find((session) => session.id === sessionId)?.workspaceId ?? selectedWorkspaceId
   const currentWorkspace = workspaces.find((workspace) => workspace.id === currentWorkspaceId)
   const workspaceSlug = currentWorkspace?.slug ?? null
   const projectRootPath = currentWorkspace?.projectRootPath ?? null

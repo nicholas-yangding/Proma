@@ -660,7 +660,8 @@ export function LeftSidebar({ width, noTransition }: LeftSidebarProps): React.Re
   const productivityTools = useAtomValue(productivityToolsAtom)
 
   // Agent 模式状态
-  const [agentSessions, setAgentSessions] = useAtom(agentSessionsAtom)
+  const [allAgentSessions, setAgentSessions] = useAtom(agentSessionsAtom)
+  const agentSessions = React.useMemo(() => allAgentSessions.filter((session) => !session.botContext), [allAgentSessions])
   const [archivedAgentSessionCount, setArchivedAgentSessionCount] = React.useState(0)
   const [currentAgentSessionId, setCurrentAgentSessionId] = useAtom(currentAgentSessionIdAtom)
   const sideDelegationMap = useAtomValue(agentSideDelegationMapAtom)
@@ -2275,6 +2276,12 @@ export function LeftSidebar({ width, noTransition }: LeftSidebarProps): React.Re
   const handleRailModeSwitch = React.useCallback((targetMode: AppMode) => {
     setViewMode('active')
     if (targetMode === mode) return
+    if (targetMode === 'bots') {
+      setMode('bots')
+      setSidebarCollapsed(false)
+      setActiveView('conversations')
+      return
+    }
 
     const isChatMode = targetMode === 'chat'
     const sessions = isChatMode ? conversations : agentSessions
@@ -3292,6 +3299,14 @@ export function LeftSidebar({ width, noTransition }: LeftSidebarProps): React.Re
             <TooltipContent side="right">Chat 模式</TooltipContent>
           </Tooltip>
 
+          <button
+            type="button"
+            aria-label="切换到 Bots 模式"
+            onClick={() => handleRailModeSwitch('bots')}
+            className="flex size-10 items-center justify-center text-muted-foreground hover:text-foreground titlebar-no-drag"
+          >
+            <Blocks size={16} />
+          </button>
           <div className="my-1 h-px w-6 bg-border/70" />
 
           <Tooltip>

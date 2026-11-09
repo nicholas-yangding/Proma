@@ -24,7 +24,8 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from '@/components/ui/context-menu'
-import { agentDiffUnseenChangesAtom, agentWorkspacePositionAtom, currentAgentSessionIdAtom } from '@/atoms/agent-atoms'
+import { agentDiffUnseenChangesAtom, agentWorkspacePositionAtom } from '@/atoms/agent-atoms'
+import { workspaceSessionIdAtom } from '@/atoms/workspace-session'
 import type { AgentSidePanelTab, SessionIndicatorStatus, WorkspaceComponentTab } from '@/atoms/agent-atoms'
 import { groupRightWorkspaceTabs, type RightWorkspacePane } from '@/lib/right-workspace-split'
 import { getDelegationStatusIconClass } from '@/lib/agent-session-list'
@@ -94,7 +95,7 @@ export function DiffPanelTabBar({
 }: DiffPanelTabBarProps): React.ReactElement {
   const unseenMap = useAtomValue(agentDiffUnseenChangesAtom)
   const setUnseenMap = useSetAtom(agentDiffUnseenChangesAtom)
-  const currentSessionId = useAtomValue(currentAgentSessionIdAtom)
+  const currentSessionId = useAtomValue(workspaceSessionIdAtom)
   const workspacePosition = useAtomValue(agentWorkspacePositionAtom)
   const WorkspacePanelIcon = workspacePosition === 'center' ? PanelLeft : PanelRight
   const unseenChanges = unseenMap.get(currentSessionId ?? '') ?? false

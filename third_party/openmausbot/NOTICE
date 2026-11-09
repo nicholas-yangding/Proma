@@ -1,0 +1,12 @@
+OpenMausBot
+Copyright 2026 Milind Soni and OpenMausBot contributors
+
+Proma 的 Bot 提及解析与群聊回应路由改编自 OpenMausBot。
+上游文件为 shared/mention-boundary.ts、shared/room-mentions.ts，
+以及 server/store.ts 中的 roomResponders。
+
+来源版本为 1de1164d5040d8699f55e0907552270bd9fbd38f。
+https://github.com/milind-soni/OpenMausBot/tree/1de1164d5040d8699f55e0907552270bd9fbd38f
+
+改动包括适配 Proma 类型与命名、输入校验、Pi 成员会话和本地原子 JSON 持久化。
+随附 LICENSE 为这些上游代码适用的 Apache License 2.0。

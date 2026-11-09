@@ -102,6 +102,7 @@ export function buildAgentSessionTrees(
   const roots: AgentSessionMeta[] = []
 
   for (const session of sessions) {
+    if (session.botContext) continue
     if (
       isDelegatedChildSession(session)
       && session.parentSessionId
