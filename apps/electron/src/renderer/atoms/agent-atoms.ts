@@ -15,6 +15,7 @@ import { calculateDockBadgeCount, countPendingRequests } from '@/lib/dock-badge-
 import type { AgentQueuedMessage } from '@/lib/agent-message-queue'
 import type { SessionFileChange } from '@/lib/session-file-changes'
 import type { RightWorkspaceSplitState } from '@/lib/right-workspace-split'
+import { selectRightWorkspaceSplitTab } from '@/lib/right-workspace-split'
 
 /** 活动状态 */
 export type ActivityStatus = 'pending' | 'running' | 'completed' | 'error' | 'backgrounded'
@@ -861,20 +862,33 @@ export interface SkillDetailNavigationRequest {
 /** 历史引用导航属于会话级短暂 UI 状态，避免其他会话的 Skills 视图消费请求。 */
 export const skillDetailNavigationAtomFamily = atomFamily((sessionId: string) => atom<SkillDetailNavigationRequest | null>(null))
 
-/** 在当前 Agent 会话中打开并聚焦一个项目级组件。 */
+interface WorkspaceComponentTarget {
+  /** 仅用于 renderer Tab 状态，不能作为会话身份传入 IPC。 */
+  scopeId: string
+  component: WorkspaceComponentTab
+}
+
+/** 在调用方明确指定的工作区面板中打开并聚焦组件。 */
 export const openWorkspaceComponentAtom = atom(
   null,
-  (get, set, component: WorkspaceComponentTab) => {
-    const sessionId = get(currentAgentSessionIdAtom)
-    if (!sessionId) return
-    set(agentSessionComponentTabsAtomFamily(sessionId), (previous) => (
+  (_get, set, { scopeId, component }: WorkspaceComponentTarget) => {
+    set(agentSessionComponentTabsAtomFamily(scopeId), (previous) => (
       previous.includes(component) ? previous : [...previous, component]
     ))
-    set(agentSidePanelOpenAtomFamily(sessionId), true)
+    set(agentSidePanelOpenAtomFamily(scopeId), true)
     set(agentDiffPanelTabAtom, (previous) => {
-      if (previous.get(sessionId) === component) return previous
+      if (previous.get(scopeId) === component) return previous
       const next = new Map(previous)
-      next.set(sessionId, component)
+      next.set(scopeId, component)
+      return next
+    })
+    set(agentSidePanelSplitMapAtom, (previous) => {
+      const split = previous.get(scopeId)
+      if (!split) return previous
+      const selected = selectRightWorkspaceSplitTab(split, component)
+      if (selected === split) return previous
+      const next = new Map(previous)
+      next.set(scopeId, selected)
       return next
     })
   },
@@ -910,17 +924,25 @@ export const revealChangedWorkspaceComponentAtom = atom(
   },
 )
 
-/** 关闭当前 session 的一个组件；若它正被当前会话查看，回退到文件。 */
+/** 关闭指定组件；分栏时保留另一 Pane，单栏当前项关闭后回到文件。 */
 export const closeWorkspaceComponentAtom = atom(
   null,
-  (get, set, component: WorkspaceComponentTab) => {
-    const sessionId = get(currentAgentSessionIdAtom)
-    if (!sessionId) return
-    set(agentSessionComponentTabsAtomFamily(sessionId), (previous) => previous.filter((item) => item !== component))
+  (get, set, { scopeId, component }: WorkspaceComponentTarget) => {
+    const split = get(agentSidePanelSplitMapAtom).get(scopeId)
+    const remainingPaneTab = split?.leftTab === component ? split.rightTab
+      : split?.rightTab === component ? split.leftTab : null
+    set(agentSessionComponentTabsAtomFamily(scopeId), (previous) => previous.filter((item) => item !== component))
+    if (remainingPaneTab) {
+      set(agentSidePanelSplitMapAtom, (previous) => {
+        const next = new Map(previous)
+        next.delete(scopeId)
+        return next
+      })
+    }
     set(agentDiffPanelTabAtom, (previous) => {
-      if (previous.get(sessionId) !== component) return previous
+      if (!remainingPaneTab && previous.get(scopeId) !== component) return previous
       const next = new Map(previous)
-      next.set(sessionId, 'files')
+      next.set(scopeId, remainingPaneTab ?? 'files')
       return next
     })
   },

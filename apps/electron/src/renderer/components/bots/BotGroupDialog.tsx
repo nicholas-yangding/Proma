@@ -2,7 +2,8 @@ import * as React from 'react'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { getBotConversationMemberIds } from '@proma/shared'
 import type { BotConversationState, BotResponder } from '@proma/shared'
-import { botsActiveConversationIdAtom, botsApplyConversationAtom, botsResourcesAtom, botsSnapshotAtom } from '@/atoms/bot-atoms'
+import { botsApplyConversationAtom, botsResourcesAtom, botsSnapshotAtom } from '@/atoms/bot-atoms'
+import { openBotsConversationAtom } from '@/atoms/bots-navigation'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
@@ -16,7 +17,7 @@ export function BotGroupDialog({ open, onOpenChange, state }: { open: boolean; o
   const snapshot = useAtomValue(botsSnapshotAtom)
   const resources = useAtomValue(botsResourcesAtom)
   const apply = useSetAtom(botsApplyConversationAtom)
-  const setActive = useSetAtom(botsActiveConversationIdAtom)
+  const openConversation = useSetAtom(openBotsConversationAtom)
   const [title, setTitle] = React.useState('')
   const [workspaceId, setWorkspaceId] = React.useState('')
   const [members, setMembers] = React.useState<string[]>([])
@@ -51,7 +52,7 @@ export function BotGroupDialog({ open, onOpenChange, state }: { open: boolean; o
         ? await getBotsAPI().updateBotConversation({ conversationId: state.conversation.id, title: title.trim(), memberBotIds: members, instructions, responder })
         : await getBotsAPI().createBotConversation({ kind: 'group', title: title.trim(), workspaceId, memberBotIds: members, instructions, responder })
       apply(next)
-      setActive(next.conversation.id)
+      openConversation(next.conversation.id)
       onOpenChange(false)
     } catch (failure) { setError(getBotError(failure)) }
     finally { setSaving(false) }

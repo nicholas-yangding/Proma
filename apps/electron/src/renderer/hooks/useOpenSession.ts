@@ -51,7 +51,6 @@ export function useOpenSession(): OpenSessionFn {
   const setCurrentConversationId = useSetAtom(currentConversationIdAtom)
   const currentAgentSessionId = useAtomValue(currentAgentSessionIdAtom)
   const setCurrentAgentSessionId = useSetAtom(currentAgentSessionIdAtom)
-  const agentSessions = useAtomValue(agentSessionsAtom)
   const setCurrentAgentWorkspaceId = useSetAtom(currentAgentWorkspaceIdAtom)
   const setUnviewedCompleted = useSetAtom(unviewedCompletedSessionIdsAtom)
   const settingsOpen = useAtomValue(settingsOpenAtom)
@@ -109,7 +108,7 @@ export function useOpenSession(): OpenSessionFn {
         })
 
         // 同步 workspaceId，确保与 TabBar 切换行为一致
-        const session = agentSessions.find((s) => s.id === sessionId)
+        const session = store.get(agentSessionsAtom).find((s) => s.id === sessionId)
         if (session?.workspaceId) {
           setCurrentAgentWorkspaceId(session.workspaceId)
           window.electronAPI.updateSettings({
@@ -124,6 +123,6 @@ export function useOpenSession(): OpenSessionFn {
 
       options?.onOpened?.()
     },
-    [tabs, setTabs, setActiveTabId, setAutomationForm, setActiveView, setAppMode, setCurrentConversationId, setCurrentAgentSessionId, agentSessions, setCurrentAgentWorkspaceId, setUnviewedCompleted, settingsOpen, channelFormDirty, setSettingsOpen, setPendingSessionNavigation, currentAgentSessionId],
+    [tabs, setTabs, setActiveTabId, setAutomationForm, setActiveView, setAppMode, setCurrentConversationId, setCurrentAgentSessionId, setCurrentAgentWorkspaceId, setUnviewedCompleted, settingsOpen, channelFormDirty, setSettingsOpen, setPendingSessionNavigation, currentAgentSessionId],
   )
 }

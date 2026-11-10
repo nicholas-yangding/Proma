@@ -1,7 +1,8 @@
 import * as React from 'react'
 import { useSetAtom } from 'jotai'
 import type { BotDefinition } from '@proma/shared'
-import { botsActiveConversationIdAtom, botsApplyConversationAtom } from '@/atoms/bot-atoms'
+import { botsApplyConversationAtom } from '@/atoms/bot-atoms'
+import { openBotsConversationAtom } from '@/atoms/bots-navigation'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -14,7 +15,7 @@ export function BotTopicDialog({ bot, open, onOpenChange }: { bot: BotDefinition
   const [saving, setSaving] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
   const apply = useSetAtom(botsApplyConversationAtom)
-  const setActive = useSetAtom(botsActiveConversationIdAtom)
+  const openConversation = useSetAtom(openBotsConversationAtom)
   React.useEffect(() => { if (open) { setTitle(''); setError(null) } }, [open, bot.id])
   const create = async (event: React.FormEvent): Promise<void> => {
     event.preventDefault()
@@ -23,7 +24,7 @@ export function BotTopicDialog({ bot, open, onOpenChange }: { bot: BotDefinition
     try {
       const state = await getBotsAPI().createBotConversation({ kind: 'direct', botId: bot.id, title: title.trim(), workspaceId: bot.defaultWorkspaceId })
       apply(state)
-      setActive(state.conversation.id)
+      openConversation(state.conversation.id)
       onOpenChange(false)
     } catch (failure) { setError(getBotError(failure)) }
     finally { setSaving(false) }

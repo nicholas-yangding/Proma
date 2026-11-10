@@ -453,33 +453,33 @@ function ExplorationBringBackAction({
 }
 
 interface SidePanelProps {
-  sessionId: string
+  scopeId: string
+  sessionId: string | null
   sessionPath: string | null
   activeTab: AgentSidePanelTab
   onTabChange: (tab: AgentSidePanelTab) => void
   width?: number
-  workspaceId?: string
+  workspaceId?: string | null
 }
 
-export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, width = 460, workspaceId }: SidePanelProps): React.ReactElement {
-  // 按会话保存最近访问顺序。该历史仅存在于当前 renderer 进程，避免恢复失效的临时 Tab。
+export function SidePanel({ scopeId, sessionId, sessionPath, activeTab, onTabChange, width = 460, workspaceId }: SidePanelProps): React.ReactElement {
   const rightPanelTabHistoryRef = React.useRef(new Map<string, AgentSidePanelTab[]>())
   const workspaceTabsRef = React.useRef<WorkspacePanelTab[]>([])
 
   React.useEffect(() => {
-    const history = rightPanelTabHistoryRef.current.get(sessionId) ?? []
-    rightPanelTabHistoryRef.current.set(sessionId, recordRightPanelTabVisit(history, activeTab))
-  }, [activeTab, sessionId])
+    const history = rightPanelTabHistoryRef.current.get(scopeId) ?? []
+    rightPanelTabHistoryRef.current.set(scopeId, recordRightPanelTabVisit(history, activeTab))
+  }, [activeTab, scopeId])
 
   const getPreviousTabBeforeClose = React.useCallback((closingTab: AgentSidePanelTab): AgentSidePanelTab => {
-    const history = rightPanelTabHistoryRef.current.get(sessionId) ?? []
+    const history = rightPanelTabHistoryRef.current.get(scopeId) ?? []
     const availableTabs = new Set(workspaceTabsRef.current
       .map((tab) => tab.id)
       .filter((tab) => tab !== closingTab))
     const nextTab = getPreviousRightPanelTab(history, closingTab, availableTabs)
-    rightPanelTabHistoryRef.current.set(sessionId, removeRightPanelTabFromHistory(history, closingTab))
+    rightPanelTabHistoryRef.current.set(scopeId, removeRightPanelTabFromHistory(history, closingTab))
     return nextTab
-  }, [sessionId])
+  }, [scopeId])
 
   const returnToPreviousTabAfterClose = React.useCallback((closingTab: AgentSidePanelTab): AgentSidePanelTab => {
     const nextTab = getPreviousTabBeforeClose(closingTab)
@@ -487,8 +487,7 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
     return nextTab
   }, [activeTab, getPreviousTabBeforeClose, onTabChange])
 
-  // 侧面板状态按 sessionId 持久化，切换会话不会互相覆盖。
-  const [isOpen, setIsOpen] = useAtom(agentSidePanelOpenAtomFamily(sessionId))
+  const [isOpen, setIsOpen] = useAtom(agentSidePanelOpenAtomFamily(scopeId))
   // Tab 系统
   const previewFileMap = useAtomValue(previewFileMapAtom)
   const setPreviewFileMap = useSetAtom(previewFileMapAtom)
@@ -498,11 +497,11 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
   const setPreviewResolvedPaths = useSetAtom(previewResolvedPathAtom)
   const previewOpenMap = useAtomValue(previewPanelOpenMapAtom)
   const setPreviewOpenMap = useSetAtom(previewPanelOpenMapAtom)
-  const previewFiles = previewFilesMap.get(sessionId) ?? []
+  const previewFiles = previewFilesMap.get(scopeId) ?? []
   const requestedPreviewId = getPreviewIdFromSidePanelTab(activeTab)
   const currentPreviewFile = (requestedPreviewId ? previewFiles.find((file) => getPreviewFileId(file) === requestedPreviewId) : null)
-    ?? previewFileMap.get(sessionId) ?? null
-  const previewOpen = previewFiles.length > 0 || previewOpenMap.get(sessionId) === true
+    ?? previewFileMap.get(scopeId) ?? null
+  const previewOpen = previewFiles.length > 0 || previewOpenMap.get(scopeId) === true
   const selectedFilePath = currentPreviewFile?.filePath
 
   const openPreview = useOpenPreview()
@@ -513,36 +512,38 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
   const basePathsRef = React.useRef<string[]>([])
 
   const handleFilePreview = React.useCallback((filePath: string) => {
+    if (!sessionId) return
     const bp = basePathsRef.current
-    openPreview(sessionId, {
+    openPreview(scopeId, {
       filePath,
       previewOnly: true,
       // 文件面板是用户主动选择的入口，保留任意本地路径预览能力。
       unrestricted: true,
       basePaths: bp.length > 0 ? bp : undefined,
     })
-  }, [sessionId, openPreview])
+  }, [scopeId, sessionId, openPreview])
 
   // Worktree 选择状态（仅用于 diff 文件点击时传递 baseRef，选取逻辑已下沉至 DiffChangesList）
   const selectedWorktreeMap = useAtomValue(agentSelectedWorktreeAtom)
-  const selectedWorktreePath = selectedWorktreeMap.get(sessionId) ?? null
+  const selectedWorktreePath = sessionId ? selectedWorktreeMap.get(sessionId) ?? null : null
 
   const handleDiffFileClick = React.useCallback((filePath: string, _isUntracked: boolean, gitRoot?: string) => {
-    openPreview(sessionId, {
+    if (!sessionId) return
+    openPreview(scopeId, {
       filePath,
       dirPath: sessionPath || undefined,
       gitRoot,
       baseRef: selectedWorktreePath ? 'origin/main' : undefined,
     })
-  }, [openPreview, sessionId, sessionPath, selectedWorktreePath])
+  }, [openPreview, scopeId, sessionId, sessionPath, selectedWorktreePath])
 
   // 动画标志：isOpen 变化时启用过渡动画，切换会话时即时显示
   const prevIsOpenRef = React.useRef(isOpen)
-  const prevSessionIdRef = React.useRef(sessionId)
-  const shouldAnimate = prevSessionIdRef.current === sessionId && prevIsOpenRef.current !== isOpen
+  const prevScopeIdRef = React.useRef(scopeId)
+  const shouldAnimate = prevScopeIdRef.current === scopeId && prevIsOpenRef.current !== isOpen
   React.useEffect(() => {
     prevIsOpenRef.current = isOpen
-    prevSessionIdRef.current = sessionId
+    prevScopeIdRef.current = scopeId
   })
 
   const filesVersion = useAtomValue(workspaceFilesVersionAtom)
@@ -552,18 +553,18 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
     : 0
   const setFilesVersion = useSetAtom(workspaceFilesVersionAtom)
   const diffRefreshVersionMap = useAtomValue(agentDiffRefreshVersionAtom)
-  const diffRefreshVersion = diffRefreshVersionMap.get(sessionId) ?? 0
+  const diffRefreshVersion = sessionId ? diffRefreshVersionMap.get(sessionId) ?? 0 : 0
   const nonGitFileChangesMap = useAtomValue(agentNonGitFileChangesAtom)
-  const nonGitFileChanges = nonGitFileChangesMap.get(sessionId) ?? []
+  const nonGitFileChanges = sessionId ? nonGitFileChangesMap.get(sessionId) ?? [] : []
   const fileChangesCurrentRunMap = useAtomValue(agentFileChangesCurrentRunAtom)
-  const fileChangesCurrentRunId = fileChangesCurrentRunMap.get(sessionId)
+  const fileChangesCurrentRunId = sessionId ? fileChangesCurrentRunMap.get(sessionId) : undefined
 
   // 文件面板必须跟随当前会话归属的项目。仅在会话元数据尚未加载时回退全局选择，
   // 避免用户切换项目列表但仍查看旧会话时读写错误项目根目录。
   const selectedWorkspaceId = useAtomValue(currentAgentWorkspaceIdAtom)
   const workspaces = useAtomValue(agentWorkspacesAtom)
   const sessions = useAtomValue(agentSessionsAtom)
-  const currentWorkspaceId = workspaceId ?? sessions.find((session) => session.id === sessionId)?.workspaceId ?? selectedWorkspaceId
+  const currentWorkspaceId = workspaceId !== undefined ? workspaceId : sessions.find((session) => session.id === sessionId)?.workspaceId ?? selectedWorkspaceId
   const currentWorkspace = workspaces.find((workspace) => workspace.id === currentWorkspaceId)
   const workspaceSlug = currentWorkspace?.slug ?? null
   const projectRootPath = currentWorkspace?.projectRootPath ?? null
@@ -573,15 +574,15 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
     && currentWorkspace.projectRootStatus !== 'available',
   )
   // 文件面板展示的是 Agent 实际操作的文件系统，不能再被会话附件范围二次截断。
-  const fileAccess = React.useMemo(() => ({ sessionId, unrestricted: true }), [sessionId])
+  const fileAccess = React.useMemo(() => ({ sessionId: sessionId ?? undefined, unrestricted: true }), [sessionId])
 
   // 附加目录列表（会话级）
   const attachedDirsMap = useAtomValue(agentAttachedDirectoriesMapAtom)
   const setAttachedDirsMap = useSetAtom(agentAttachedDirectoriesMapAtom)
-  const attachedDirs = attachedDirsMap.get(sessionId) ?? []
+  const attachedDirs = sessionId ? attachedDirsMap.get(sessionId) ?? [] : []
   const attachedFilesMap = useAtomValue(agentAttachedFilesMapAtom)
   const setAttachedFilesMap = useSetAtom(agentAttachedFilesMapAtom)
-  const attachedFiles = attachedFilesMap.get(sessionId) ?? []
+  const attachedFiles = sessionId ? attachedFilesMap.get(sessionId) ?? [] : []
 
   // 附加目录列表（工作区级）
   const wsAttachedDirsMap = useAtomValue(workspaceAttachedDirectoriesMapAtom)
@@ -632,6 +633,7 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
   // === 会话级：移除既有附加项 ===
 
   const handleDetachDirectory = React.useCallback(async (dirPath: string) => {
+    if (!sessionId) return
     try {
       const updated = await window.electronAPI.detachDirectory({ sessionId, directoryPath: dirPath })
       setAttachedDirsMap((prev) => {
@@ -645,6 +647,7 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
   }, [sessionId, setAttachedDirsMap])
 
   const handleDetachFile = React.useCallback(async (filePath: string) => {
+    if (!sessionId) return
     try {
       const updated = await window.electronAPI.detachFile({ sessionId, filePath })
       setAttachedFilesMap((prev) => {
@@ -658,6 +661,7 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
   }, [sessionId, setAttachedFilesMap])
 
   const attachSessionDir = React.useCallback(async (dirPath: string) => {
+    if (!sessionId) return
     const updated = await window.electronAPI.attachDirectory({ sessionId, directoryPath: dirPath })
     setAttachedDirsMap((prev) => {
       const map = new Map(prev)
@@ -667,13 +671,14 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
   }, [sessionId, setAttachedDirsMap])
 
   const handleAttachSessionFolder = React.useCallback(async () => {
+    if (!sessionId) return
     try {
       const result = await window.electronAPI.openFolderDialog()
       if (result) await attachSessionDir(result.path)
     } catch (error) {
       console.error('[SidePanel] 附加会话文件夹失败:', error)
     }
-  }, [attachSessionDir])
+  }, [attachSessionDir, sessionId])
 
   const handleSessionFoldersDropped = React.useCallback(async (folderPaths: string[]) => {
     for (const dirPath of folderPaths) {
@@ -684,6 +689,7 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
   }, [attachSessionDir])
 
   const attachSessionFile = React.useCallback(async (filePath: string) => {
+    if (!sessionId) return
     const updated = await window.electronAPI.attachFile({ sessionId, filePath })
     setAttachedFilesMap((prev) => {
       const map = new Map(prev)
@@ -782,9 +788,10 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
   }, [setFilesVersion])
 
   // 添加文件到聊天
-  const pendingFiles = useAtomValue(agentPendingFilesAtomFamily(sessionId))
-  const setPendingFiles = useSetAtom(agentPendingFilesAtomFamily(sessionId))
+  const pendingFiles = useAtomValue(agentPendingFilesAtomFamily(sessionId ?? ''))
+  const setPendingFiles = useSetAtom(agentPendingFilesAtomFamily(sessionId ?? ''))
   const handleAddToChat = React.useCallback((entry: FileEntry) => {
+    if (!sessionId) return
     // 先在 setter 外部检查去重，避免在 updater 函数内执行不可逆副作用
     if (pendingFiles.some((f) => f.sourcePath === entry.path)) return
 
@@ -798,7 +805,7 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
 
     // 有 sourcePath 的文件发送时直接引用原路径，不需要存 base64
     setPendingFiles((prev) => [...prev, pending])
-  }, [pendingFiles, setPendingFiles])
+  }, [pendingFiles, sessionId, setPendingFiles])
 
 
   // 工作区文件目录路径
@@ -830,13 +837,13 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
 
   const fileSourceFilterMap = useAtomValue(agentFileSourceFilterMapAtom)
   const setFileSourceFilterMap = useSetAtom(agentFileSourceFilterMapAtom)
-  const fileSourceFilter = fileSourceFilterMap[sessionId] ?? 'project'
+  const fileSourceFilter = fileSourceFilterMap[scopeId] ?? 'project'
   const setFileSourceFilter = React.useCallback((source: AgentFileSourceFilter) => {
     setFileSourceFilterMap((prev) => {
-      if (prev[sessionId] === source) return prev
-      return { ...prev, [sessionId]: source }
+      if (prev[scopeId] === source) return prev
+      return { ...prev, [scopeId]: source }
     })
-  }, [sessionId, setFileSourceFilterMap])
+  }, [scopeId, setFileSourceFilterMap])
   const sessionFileRoots = React.useMemo(
     () => sessionPath ? [{ path: sessionPath, scope: 'session' as const }] : [],
     [sessionPath],
@@ -856,18 +863,18 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
   const hasWorkspaceAttachedItems = wsAttachedDirs.length > 0 || wsAttachedFiles.length > 0
   const sideChatMap = useAtomValue(agentSideChatMapAtom)
   const setSideChatMap = useSetAtom(agentSideChatMapAtom)
-  const sideChatConversationId = sideChatMap.get(sessionId) ?? null
+  const sideChatConversationId = sessionId ? sideChatMap.get(sessionId) ?? null : null
   const sideTemporaryAgentMap = useAtomValue(agentSideTemporaryAgentMapAtom)
   const setSideTemporaryAgentMap = useSetAtom(agentSideTemporaryAgentMapAtom)
-  const sideTemporaryAgents = sideTemporaryAgentMap.get(sessionId) ?? []
+  const sideTemporaryAgents = sessionId ? sideTemporaryAgentMap.get(sessionId) ?? [] : []
   const sideDelegationMap = useAtomValue(agentSideDelegationMapAtom)
   const setSideDelegationMap = useSetAtom(agentSideDelegationMapAtom)
   const setUnviewedDelegatedCompleted = useSetAtom(unviewedCompletedDelegatedSessionIdsAtom)
-  const sideDelegationSessionId = sideDelegationMap.get(sessionId) ?? null
+  const sideDelegationSessionId = sessionId ? sideDelegationMap.get(sessionId) ?? null : null
   const agentIndicatorMap = useAtomValue(agentSessionIndicatorMapAtom)
   const terminalTabsMap = useAtomValue(agentTerminalTabsAtom)
   const setTerminalTabsMap = useSetAtom(agentTerminalTabsAtom)
-  const terminalTabs = terminalTabsMap.get(sessionId) ?? []
+  const terminalTabs = sessionId ? terminalTabsMap.get(sessionId) ?? [] : []
   const activeTerminalId = getTerminalIdFromSidePanelTab(activeTab)
   const selectedDelegationSession = sideDelegationSessionId
     ? sessions.find((item) => item.id === sideDelegationSessionId && item.parentSessionId === sessionId && !!item.sourceDelegationId) ?? null
@@ -879,8 +886,7 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
   const activeExplorationBranch = activeExplorationSessionId
     ? sideTemporaryAgents.find((branch) => branch.sessionId === activeExplorationSessionId) ?? null
     : null
-  // Todo / 日程 / 能力 / 记忆的数据仍归属于 workspace，但右侧 Tab 仅属于当前 session。
-  const [workspaceComponentTabs, setWorkspaceComponentTabs] = useAtom(agentSessionComponentTabsAtomFamily(sessionId))
+  const [workspaceComponentTabs, setWorkspaceComponentTabs] = useAtom(agentSessionComponentTabsAtomFamily(scopeId))
   const productivityTools = useAtomValue(productivityToolsAtom)
   const automationFormOpen = useAtomValue(automationFormAtom).open
   const isWorkspaceComponentEnabled = React.useCallback((component: WorkspaceComponentTab): boolean => (
@@ -898,7 +904,7 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
     setWorkspaceComponentTabs(validTabs)
   }, [isWorkspaceComponentEnabled, setWorkspaceComponentTabs, workspaceComponentTabs])
 
-  const agentStreamState = useAtomValue(agentSessionStreamingStateAtomFamily(sessionId))
+  const agentStreamState = useAtomValue(agentSessionStreamingStateAtomFamily(sessionId ?? ''))
   const memoryChangesMap = useAtomValue(workspaceMemoryChangesAtom)
   const setMemoryNavigationRequest = useSetAtom(memoryFileNavigationAtom)
   const latestMemoryChange = workspaceSlug ? memoryChangesMap.get(workspaceSlug)?.[0] : undefined
@@ -908,32 +914,32 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
     // `temporary-agent` 是旧的单分支内存状态；新状态使用 exploration:<sessionId>。
     : activeTab === 'temporary-agent' || (activeExplorationSessionId !== null && !activeExplorationBranch) || (activeTab === 'delegation' && !selectedDelegationSession) || (activeTerminalId !== null && !terminalTabs.some((terminal) => terminal.terminalId === activeTerminalId))
       ? 'files'
-      : isWorkspaceComponentTab(activeTab) && (!workspaceSlug || !workspaceComponentTabs.includes(activeTab) || !isWorkspaceComponentEnabled(activeTab))
+      : isWorkspaceComponentTab(activeTab) && (!workspaceComponentTabs.includes(activeTab) || !isWorkspaceComponentEnabled(activeTab))
         ? 'files'
         : activeTab
   const [splitMap, setSplitMap] = useAtom(agentSidePanelSplitMapAtom)
   const [splitRatioMap, setSplitRatioMap] = useAtom(agentSidePanelSplitRatioMapAtom)
-  const split = splitMap.get(sessionId) ?? null
+  const split = splitMap.get(scopeId) ?? null
   const splitMapRef = React.useRef(splitMap)
   splitMapRef.current = splitMap
-  const savedSplitRatio = clampRightWorkspaceSplitRatio(splitRatioMap[sessionId] ?? 0.5)
+  const savedSplitRatio = clampRightWorkspaceSplitRatio(splitRatioMap[scopeId] ?? 0.5)
 
   const updateSplit = React.useCallback((next: RightWorkspaceSplitState | null) => {
     setSplitMap((previous) => {
-      const current = previous.get(sessionId) ?? null
+      const current = previous.get(scopeId) ?? null
       if (current === next) return previous
       const updated = new Map(previous)
-      if (next) updated.set(sessionId, next)
-      else updated.delete(sessionId)
+      if (next) updated.set(scopeId, next)
+      else updated.delete(scopeId)
       return updated
     })
-  }, [sessionId, setSplitMap])
+  }, [scopeId, setSplitMap])
 
   // memory 写入不能沿用通用组件激活：只有 watcher 捕获真实文件变更后才能生成受限 Diff。
   // SidePanel 按 session 挂载，因此只会为正在运行的来源 session 路由这次 Diff；其他会话不受影响。
   React.useEffect(() => {
     const runStartedAt = agentStreamState?.startedAt
-    if (!agentStreamState?.running || !runStartedAt || !latestMemoryChange || latestMemoryChange.changedAt < runStartedAt) return
+    if (!sessionId || !agentStreamState?.running || !runStartedAt || !latestMemoryChange || latestMemoryChange.changedAt < runStartedAt) return
     const changeId = `${latestMemoryChange.relativePath}:${latestMemoryChange.changedAt}`
     if (lastActivatedMemoryChangeRef.current === changeId) return
     lastActivatedMemoryChangeRef.current = changeId
@@ -945,22 +951,22 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
     setMemoryNavigationRequest({ workspaceSlug: workspaceSlug!, relativePath: latestMemoryChange.relativePath, mode: 'change' })
     setIsOpen(true)
     onTabChange('memory')
-  }, [agentStreamState?.running, agentStreamState?.startedAt, effectiveActiveTab, isOpen, latestMemoryChange, onTabChange, setIsOpen, setMemoryNavigationRequest, setWorkspaceComponentTabs, workspaceSlug])
+  }, [agentStreamState?.running, agentStreamState?.startedAt, effectiveActiveTab, isOpen, latestMemoryChange, onTabChange, sessionId, setIsOpen, setMemoryNavigationRequest, setWorkspaceComponentTabs, workspaceSlug])
 
   const handleClosePreviewTab = React.useCallback((previewId: string) => {
     const closingFile = previewFiles.find((file) => getPreviewFileId(file) === previewId)
     // 关闭代表结束这次预览生命周期；下次打开必须重新读盘，不能回落到旧 v0 缓存。
-    if (closingFile?.previewOnly) clearPreviewContentCacheForFile(sessionId, closingFile.filePath)
+    if (closingFile?.previewOnly) clearPreviewContentCacheForFile(scopeId, closingFile.filePath)
     const remaining = previewFiles.filter((file) => getPreviewFileId(file) !== previewId)
     setPreviewFilesMap((previous) => {
       const next = new Map(previous)
-      if (remaining.length > 0) next.set(sessionId, remaining)
-      else next.delete(sessionId)
+      if (remaining.length > 0) next.set(scopeId, remaining)
+      else next.delete(scopeId)
       return next
     })
     const fallback = remaining.at(-1) ?? null
     setPreviewContentRefreshVersion((previous) => {
-      const key = `${sessionId}\u0000${previewId}`
+      const key = `${scopeId}\u0000${previewId}`
       if (!previous.has(key)) return previous
       const next = new Map(previous)
       next.delete(key)
@@ -968,11 +974,11 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
     })
     setPreviewFileMap((previous) => {
       const next = new Map(previous)
-      next.set(sessionId, fallback)
+      next.set(scopeId, fallback)
       return next
     })
     setPreviewResolvedPaths((previous) => {
-      const key = `${sessionId}\u0000${previewId}`
+      const key = `${scopeId}\u0000${previewId}`
       if (!previous.has(key)) return previous
       const next = new Map(previous)
       next.delete(key)
@@ -980,13 +986,14 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
     })
     setPreviewOpenMap((previous) => {
       const next = new Map(previous)
-      next.set(sessionId, fallback !== null)
+      next.set(scopeId, fallback !== null)
       return next
     })
     if (getPreviewIdFromSidePanelTab(activeTab) === previewId) returnToPreviousTabAfterClose(getPreviewSidePanelTab(previewId))
-  }, [activeTab, previewFiles, returnToPreviousTabAfterClose, sessionId, setPreviewContentRefreshVersion, setPreviewFileMap, setPreviewFilesMap, setPreviewOpenMap, setPreviewResolvedPaths])
+  }, [activeTab, previewFiles, returnToPreviousTabAfterClose, scopeId, setPreviewContentRefreshVersion, setPreviewFileMap, setPreviewFilesMap, setPreviewOpenMap, setPreviewResolvedPaths])
 
   const handleCloseChatTab = React.useCallback(() => {
+    if (!sessionId) return
     setSideChatMap((prev) => {
       if (!prev.has(sessionId)) return prev
       const next = new Map(prev)
@@ -997,6 +1004,7 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
   }, [activeTab, returnToPreviousTabAfterClose, sessionId, setSideChatMap])
 
   const handleCloseExplorationTab = React.useCallback((branchSessionId: string) => {
+    if (!sessionId) return
     setSideTemporaryAgentMap((prev) => {
       const openBranches = prev.get(sessionId) ?? []
       const remaining = openBranches.filter((branch) => branch.sessionId !== branchSessionId)
@@ -1012,6 +1020,7 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
   }, [activeTab, returnToPreviousTabAfterClose, sessionId, setSideTemporaryAgentMap])
 
   const handleCloseDelegationTab = React.useCallback(() => {
+    if (!sessionId) return
     setSideDelegationMap((prev) => {
       if (!prev.has(sessionId)) return prev
       const next = new Map(prev)
@@ -1025,6 +1034,7 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
 
   // 分支是正常持久化会话，但若用户从左侧删除了它，右侧不能保留悬空 Tab。
   React.useEffect(() => {
+    if (!sessionId) return
     const validBranchIds = new Set(sessions.map((item) => item.id))
     const remaining = sideTemporaryAgents.filter((branch) => validBranchIds.has(branch.sessionId))
     if (remaining.length === sideTemporaryAgents.length) return
@@ -1044,7 +1054,7 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
 
   // 子 Agent 被从左侧删除后，同样移除右侧的悬空观察 Tab；不改变左侧树的现有渲染与排序。
   React.useEffect(() => {
-    if (!sideDelegationSessionId) return
+    if (!sessionId || !sideDelegationSessionId) return
     const validChildIds = new Set(sessions
       .filter((item) => item.parentSessionId === sessionId && !!item.sourceDelegationId)
       .map((item) => item.id))
@@ -1065,7 +1075,7 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
   const browserStateMap = useAtomValue(browserStateMapAtom)
   const setBrowserStateMap = useSetAtom(browserStateMapAtom)
   const setPendingNavigationMap = useSetAtom(browserPendingNavigationMapAtom)
-  const browserState = browserStateMap.get(sessionId) ?? null
+  const browserState = sessionId ? browserStateMap.get(sessionId) ?? null : null
   const openingBrowserSessionRef = React.useRef<string | null>(null)
   // 右侧 Tab 可被快速连续点击。队列必须同时按 Session/epoch 隔离；SidePanel
   // 组件会跨 Session 复用，旧 Session 的异步 IPC 绝不能消费新 Session 的 tabId。
@@ -1080,6 +1090,7 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
   }
 
   const publishBrowserState = React.useCallback((state: NonNullable<typeof browserState>) => {
+    if (!sessionId) return
     setBrowserStateMap((previous) => {
       const next = new Map(previous)
       next.set(sessionId, state)
@@ -1098,6 +1109,7 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
   }, [sessionId, setBrowserMinimizedMap, setBrowserOpenMap, setBrowserStateMap])
 
   const ensureBrowserOpen = React.useCallback(async () => {
+    if (!sessionId) return
     if (openingBrowserSessionRef.current === sessionId) return null
     const open = (window.electronAPI as Partial<typeof window.electronAPI>).openAgentBrowser
     if (typeof open !== 'function') return null
@@ -1115,6 +1127,7 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
   }, [publishBrowserState, sessionId])
 
   const flushBrowserTabSelection = React.useCallback(() => {
+    if (!sessionId) return
     const queue = browserSelectionQueueRef.current
     if (queue.sessionId !== sessionId || queue.running) return
     queue.running = true
@@ -1150,7 +1163,7 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
 
   const handleCloseSidePanel = React.useCallback(() => {
     // Closing the whole right workspace hides every auxiliary conversation.
-    rememberStopGenerationTarget({ kind: 'agent', sessionId })
+    if (sessionId) rememberStopGenerationTarget({ kind: 'agent', sessionId })
     setIsOpen(false)
   }, [sessionId, setIsOpen])
 
@@ -1174,7 +1187,7 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
       if (file) {
         setPreviewFileMap((previous) => {
           const next = new Map(previous)
-          next.set(sessionId, file)
+          next.set(scopeId, file)
           return next
         })
       }
@@ -1187,7 +1200,7 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
     if (queue.sessionId !== sessionId) return
     queue.desiredTabId = browserTabId
     flushBrowserTabSelection()
-  }, [flushBrowserTabSelection, markDelegationSessionViewed, onTabChange, previewFiles, sessionId, setPreviewFileMap, sideChatConversationId, sideDelegationSessionId, sideTemporaryAgents, split, updateSplit])
+  }, [flushBrowserTabSelection, markDelegationSessionViewed, onTabChange, previewFiles, scopeId, sessionId, setPreviewFileMap, sideChatConversationId, sideDelegationSessionId, sideTemporaryAgents, split, updateSplit])
 
   // Agent/浏览器等外部事件仍只更新兼容 activeTab；分屏时把新目标落到当前焦点 Pane。
   React.useEffect(() => {
@@ -1196,6 +1209,7 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
   }, [effectiveActiveTab, split, updateSplit])
 
   const handleOpenBrowserTab = React.useCallback(async () => {
+    if (!sessionId) return
     try {
       const state = browserState
         ? await window.electronAPI.createAgentBrowserTab({ sessionId })
@@ -1209,6 +1223,7 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
   }, [browserState, ensureBrowserOpen, handleWorkspaceTabChange, publishBrowserState, sessionId])
 
   const handleOpenTerminal = React.useCallback((cwd?: string, title = '终端') => {
+    if (!sessionId) return
     const terminalId = crypto.randomUUID()
     setTerminalTabsMap((previous) => {
       const next = new Map(previous)
@@ -1227,6 +1242,7 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
   }, [handleOpenTerminal])
 
   const handleCloseBrowserTab = React.useCallback(async (browserTabId: string): Promise<boolean> => {
+    if (!sessionId) return false
     try {
       const state = await window.electronAPI.closeAgentBrowserTab({ sessionId, tabId: browserTabId })
       if (state) {
@@ -1344,18 +1360,18 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
   }, [effectiveActiveTab, onTabChange, split, updateSplit, workspaceTabs])
 
   const exitSplitInsteadOfClosingBoundTab = React.useCallback((tab: AgentSidePanelTab): boolean => {
-    const currentSplit = splitMapRef.current.get(sessionId) ?? null
+    const currentSplit = splitMapRef.current.get(scopeId) ?? null
     if (!currentSplit || (tab !== currentSplit.leftTab && tab !== currentSplit.rightTab)) return false
     // 关闭命令作用于绑定组时不销毁成员；等同“退出并排，保留当前焦点”。
     handleWorkspaceTabChange(collapseRightWorkspaceSplit(currentSplit))
     updateSplit(null)
     return true
-  }, [handleWorkspaceTabChange, sessionId, updateSplit])
+  }, [handleWorkspaceTabChange, scopeId, updateSplit])
 
   const handleCloseWorkspaceTab = React.useCallback((tab: AgentSidePanelTab) => {
     if (exitSplitInsteadOfClosingBoundTab(tab)) return
     const terminalId = getTerminalIdFromSidePanelTab(tab)
-    if (terminalId) {
+    if (terminalId && sessionId) {
       void window.electronAPI.killTerminal(terminalId).catch(console.error)
       setTerminalTabsMap((previous) => {
         const current = previous.get(sessionId) ?? []
@@ -1387,18 +1403,18 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
   React.useEffect(() => {
     const handleCloseActiveWorkspaceTab = (event: Event) => {
       const { sessionId: targetSessionId } = (event as CustomEvent<{ sessionId?: string }>).detail ?? {}
-      if (targetSessionId === sessionId) handleCloseWorkspaceTab(activeTab)
+      if (targetSessionId === scopeId) handleCloseWorkspaceTab(activeTab)
     }
     window.addEventListener(CLOSE_ACTIVE_RIGHT_WORKSPACE_TAB_EVENT, handleCloseActiveWorkspaceTab)
     return () => window.removeEventListener(CLOSE_ACTIVE_RIGHT_WORKSPACE_TAB_EVENT, handleCloseActiveWorkspaceTab)
-  }, [activeTab, handleCloseWorkspaceTab, sessionId])
+  }, [activeTab, handleCloseWorkspaceTab, scopeId])
 
   const splitContentRef = React.useRef<HTMLDivElement>(null)
   const splitDividerCancelRef = React.useRef<(() => void) | null>(null)
   const [tabDrag, setTabDrag] = React.useState<RightWorkspaceTabDragState | null>(null)
   const [dragTargetPane, setDragTargetPane] = React.useState<RightWorkspacePane | null>(null)
 
-  React.useEffect(() => () => splitDividerCancelRef.current?.(), [sessionId])
+  React.useEffect(() => () => splitDividerCancelRef.current?.(), [scopeId])
 
   const resolveDragTargetPane = React.useCallback((state: RightWorkspaceTabDragState): RightWorkspacePane | null => {
     const rect = splitContentRef.current?.getBoundingClientRect()
@@ -1443,8 +1459,8 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
   }, [handleWorkspaceTabChange, split, updateSplit])
 
   const persistSplitRatio = React.useCallback((ratio: number) => {
-    setSplitRatioMap((previous) => ({ ...previous, [sessionId]: clampRightWorkspaceSplitRatio(ratio) }))
-  }, [sessionId, setSplitRatioMap])
+    setSplitRatioMap((previous) => ({ ...previous, [scopeId]: clampRightWorkspaceSplitRatio(ratio) }))
+  }, [scopeId, setSplitRatioMap])
 
   const handleSplitDividerMouseDown = React.useCallback((event: React.MouseEvent) => {
     if (!split) return
@@ -1464,10 +1480,10 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
     const apply = () => {
       latestRatio = clampRightWorkspaceSplitRatioForWidth(startRatio + (latestX - startX) / width, width)
       setSplitMap((previous) => {
-        const current = previous.get(sessionId)
+        const current = previous.get(scopeId)
         if (!current || current.ratio === latestRatio) return previous
         const next = new Map(previous)
-        next.set(sessionId, { ...current, ratio: latestRatio })
+        next.set(scopeId, { ...current, ratio: latestRatio })
         return next
       })
     }
@@ -1498,7 +1514,7 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
     document.addEventListener('mousemove', onMove)
     document.addEventListener('mouseup', onUp)
     window.addEventListener('blur', cancel)
-  }, [persistSplitRatio, sessionId, setSplitMap, split])
+  }, [persistSplitRatio, scopeId, setSplitMap, split])
 
   const resetSplitRatio = React.useCallback(() => {
     if (!split) return
@@ -1507,6 +1523,7 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
   }, [persistSplitRatio, split, updateSplit])
 
   const renderFileSourceContent = (scope: 'session' | 'project'): React.ReactElement => {
+    if (!sessionId) return <div className="flex flex-1 items-center justify-center text-xs text-muted-foreground">尚未产生运行会话</div>
     const isSession = scope === 'session'
     const hasAttachedItems = isSession ? hasSessionAttachedItems : hasWorkspaceAttachedItems
     const roots = isSession ? sessionFileRoots : projectFileRoots
@@ -1517,7 +1534,7 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
           {isSession ? '会话文件' : '项目文件'}
         </h3>
         <PersistentFileScrollArea
-          stateKey={getFileBrowserScrollStateKey(sessionId, scope, roots)}
+          stateKey={getFileBrowserScrollStateKey(scopeId, scope, roots)}
           autoRevealTs={activeAutoRevealTs}
           className="min-h-0 flex-1 overflow-y-auto scrollbar-thin pt-1"
         >
@@ -1548,7 +1565,7 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
   const renderWorkspaceTabContent = (paneTab: AgentSidePanelTab, paneWidth: number): React.ReactNode => {
     const panePreviewId = getPreviewIdFromSidePanelTab(paneTab)
     const panePreviewFile = (panePreviewId ? previewFiles.find((file) => getPreviewFileId(file) === panePreviewId) : null)
-      ?? previewFileMap.get(sessionId) ?? null
+      ?? previewFileMap.get(scopeId) ?? null
     const paneBrowserTabId = getBrowserTabIdFromSidePanelTab(paneTab)
     const paneExplorationSessionId = getExplorationSessionIdFromSidePanelTab(paneTab)
     const paneExplorationBranch = paneExplorationSessionId
@@ -1560,6 +1577,9 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
       : null
     const paneTerminalId = getTerminalIdFromSidePanelTab(paneTab)
     const paneTerminal = paneTerminalId ? terminalTabs.find((terminal) => terminal.terminalId === paneTerminalId) ?? null : null
+    if (!sessionId && (panePreviewId || paneBrowserTabId || paneTerminalId || paneExplorationSessionId || paneTab === 'chat' || paneTab === 'delegation')) {
+      return <div className="flex flex-1 items-center justify-center text-xs text-muted-foreground">尚未产生运行会话</div>
+    }
     // Files 的双来源布局必须由它所在 Pane 的真实宽度决定，而不是整个右侧工作区宽度。
     const showBothFileSources = shouldShowBothFileSources(paneWidth)
     const showSessionFiles = showBothFileSources || fileSourceFilter === 'session'
@@ -1571,7 +1591,7 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
     const hasVisibleSessionAttachedItems = showSessionFiles && hasSessionAttachedItems
     const hasVisibleWorkspaceAttachedItems = showProjectFiles && hasWorkspaceAttachedItems
 
-    if (paneTerminal) {
+    if (sessionId && paneTerminal) {
       return (
         <div className="min-h-0 flex-1 overflow-hidden">
           <TerminalTabContent terminalId={paneTerminal.terminalId} sessionId={sessionId} cwd={paneTerminal.cwd ?? sessionPath ?? undefined} terminateOnUnmount={false} />
@@ -1580,9 +1600,9 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
     }
 
     return (
-    panePreviewId && panePreviewFile ? (
+    sessionId && panePreviewId && panePreviewFile ? (
       <div className="min-h-0 flex-1 overflow-hidden"><PreviewPanel sessionId={sessionId} file={panePreviewFile} onClose={() => handleClosePreviewTab(panePreviewId)} /></div>
-    ) : paneBrowserTabId ? (
+    ) : sessionId && paneBrowserTabId ? (
       browserState && browserState.tabs.some((tab) => tab.tabId === paneBrowserTabId) ? (
         tabDrag ? (
           <div className="flex flex-1 items-center justify-center bg-muted/15 text-xs text-muted-foreground">释放后恢复浏览器视图</div>
@@ -1607,11 +1627,11 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
       ) : (
         <div className="flex-1 flex items-center justify-center text-muted-foreground text-xs">暂无问答会话</div>
       )
-    ) : paneExplorationBranch ? (
+    ) : sessionId && paneExplorationBranch ? (
       <SideAgentSessionContent contentKey={`exploration:${paneExplorationBranch.sessionId}`}>
         <AgentView sessionId={paneExplorationBranch.sessionId} embedded />
       </SideAgentSessionContent>
-    ) : paneDelegationSession ? (
+    ) : sessionId && paneDelegationSession ? (
       <SideAgentSessionContent
         contentKey={`delegation:${paneDelegationSession.id}`}
         onView={() => markDelegationSessionViewed(paneDelegationSession.id)}
@@ -1625,21 +1645,21 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
     ) : paneTab === 'automations' ? (
       automationFormOpen ? <AutomationFormView embedded /> : <PlanningView embedded componentTab="automations" />
     ) : paneTab === 'skills' ? (
-      <AgentSkillsView embedded componentTab="skills" workspaceId={currentWorkspaceId ?? undefined} sessionId={sessionId} />
+      <AgentSkillsView key={`${scopeId}:skills`} embedded componentTab="skills" workspaceId={currentWorkspaceId} sessionId={sessionId ?? undefined} />
     ) : paneTab === 'mcp' ? (
-      <AgentSkillsView embedded componentTab="mcp" workspaceId={currentWorkspaceId ?? undefined} sessionId={sessionId} />
+      <AgentSkillsView key={`${scopeId}:mcp`} embedded componentTab="mcp" workspaceId={currentWorkspaceId} sessionId={sessionId ?? undefined} />
     ) : paneTab === 'memory' ? (
       workspaceSlug ? (
         <div className="min-h-0 flex-1 overflow-hidden p-2">
-          <WorkspaceMemoryTab workspaceSlug={workspaceSlug} sessionId={sessionId} embedded onCloseChangeView={() => handleCloseWorkspaceTab('memory')} />
+          <WorkspaceMemoryTab workspaceSlug={workspaceSlug} sessionId={sessionId ?? undefined} embedded onCloseChangeView={() => handleCloseWorkspaceTab('memory')} />
         </div>
       ) : (
-        <div className="flex flex-1 items-center justify-center text-xs text-muted-foreground">等待项目初始化...</div>
+        <div className="flex flex-1 items-center justify-center text-xs text-muted-foreground">请先选择项目</div>
       )
     ) : paneTab === 'vault' ? (
-      <div className="min-h-0 flex-1 overflow-hidden"><VaultView embedded sessionId={sessionId} /></div>
+      <div className="min-h-0 flex-1 overflow-hidden"><VaultView embedded sessionId={sessionId ?? undefined} /></div>
     ) : paneTab === 'changes' ? (
-      sessionPath ? (
+      sessionId && sessionPath ? (
         <DiffChangesList
           key={sessionId}
           dirPath={workspaces.find((workspace) => workspace.id === currentWorkspaceId)?.projectRootPath ?? sessionPath}
@@ -1658,11 +1678,11 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
           onPlainFileClick={handleFilePreview}
         />
       ) : (
-        <div className="flex-1 flex items-center justify-center text-muted-foreground text-xs">等待会话初始化...</div>
+        <div className="flex-1 flex items-center justify-center text-muted-foreground text-xs">{sessionId ? '等待会话初始化...' : '尚未产生运行会话'}</div>
       )
     ) : paneTab === 'files' ? (
       <div className="flex-1 min-h-0 flex flex-col pt-2 mx-2 mb-2">
-        {sessionPath ? (
+        {sessionId && sessionPath ? (
           <>
             <FileSearchBar
               workspaceFilesPath={isProjectRootUnavailable ? null : workspaceFilesPath}
@@ -1747,7 +1767,7 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
             )}
           </>
         ) : (
-          <div className="flex-1 flex items-center justify-center text-muted-foreground text-xs">等待会话初始化...</div>
+          <div className="flex-1 flex items-center justify-center text-muted-foreground text-xs">{sessionId ? '等待会话初始化...' : '尚未产生运行会话'}</div>
         )}
       </div>
     ) : null
@@ -1786,15 +1806,15 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
         )}
         >
           <DiffPanelTabBar
-            key={sessionId}
+            key={scopeId}
             tabs={workspaceTabs}
             activeTab={effectiveActiveTab}
             onTabChange={handleWorkspaceTabChange}
             onCloseTab={handleCloseWorkspaceTab}
-            onOpenBrowser={() => void handleOpenBrowserTab()}
+            onOpenBrowser={sessionId ? () => void handleOpenBrowserTab() : undefined}
             onAddTabMenuOpenChange={setIsAddTabMenuOpen}
             onOpenFile={() => handleWorkspaceTabChange('files')}
-            onOpenTerminal={handleOpenTerminal}
+            onOpenTerminal={sessionId ? handleOpenTerminal : undefined}
             onOpenWorkspaceComponent={(component) => {
               if (!isWorkspaceComponentEnabled(component)) return
               setWorkspaceComponentTabs((previous) => previous.includes(component) ? previous : [...previous, component])
@@ -1812,7 +1832,7 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
             onTabDrop={handleTabDrop}
             onSplitTab={handleSplitTab}
             onCollapseSplit={split ? handleCollapseSplit : undefined}
-            activeTabAction={activeExplorationBranch ? (
+            activeTabAction={sessionId && activeExplorationBranch ? (
               <ExplorationBringBackAction parentSessionId={sessionId} branch={activeExplorationBranch} sessions={sessions} />
             ) : undefined}
             onClose={handleCloseSidePanel}

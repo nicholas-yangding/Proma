@@ -71,16 +71,17 @@ export interface AgentSkillsData {
 }
 
 /**
- * workspaceId 指定时用于右侧 Component Workspace：数据归属必须锁定到宿主 Agent
- * 会话的项目，不能跟随全局项目选择器切换。
+ * workspaceId 指定时用于右侧 Component Workspace：数据归属必须锁定到宿主
+ * 的项目，不能跟随全局项目选择器切换；null 明确表示未选择项目。
  */
-export function useAgentSkillsData(workspaceId?: string): AgentSkillsData {
+export function useAgentSkillsData(workspaceId?: string | null): AgentSkillsData {
   const workspaces = useAtomValue(agentWorkspacesAtom)
   const selectedWorkspaceId = useAtomValue(currentAgentWorkspaceIdAtom)
   const capabilitiesVersion = useAtomValue(workspaceCapabilitiesVersionAtom)
   const bumpCapabilitiesVersion = useSetAtom(workspaceCapabilitiesVersionAtom)
 
-  const currentWorkspace = workspaces.find((w) => w.id === (workspaceId ?? selectedWorkspaceId))
+  const currentWorkspaceId = workspaceId === undefined ? selectedWorkspaceId : workspaceId
+  const currentWorkspace = workspaces.find((w) => w.id === currentWorkspaceId)
   const workspaceSlug = currentWorkspace?.slug ?? ''
 
   const [loading, setLoading] = React.useState(true)

@@ -1,0 +1,17 @@
+diff --git a/dist/adapters/client.browser.js b/dist/adapters/client.browser.js
+index b8b98063403cdcead4ce9ccd7e751a0da7e3bea5..76bf8430f7300a9ebb13cc7db94aec2172b6295b 100644
+--- a/dist/adapters/client.browser.js
++++ b/dist/adapters/client.browser.js
+@@ -2533,9 +2533,9 @@ function qn(e, t) {
+ 	}
+ 	function h(e) {
+ 		if (a() || Re(e.target, r) || W(e.target)) return;
+-		let o = U(e.target);
+-		if (o && G(e, i.hotKeys)) {
+-			e.preventDefault(), e.stopPropagation(), t.openSource(o);
++		let c = U(e.target);
++		if (c && G(e, i.hotKeys)) {
++			e.preventDefault(), e.stopPropagation(), o.request(void 0), n.hoveredElement = void 0, n.open = !0, n.selecting = !1, u(!1), Ut(n.selectedElements, [c]) ? s() : t.chooseElements([c]);
+ 			return;
+ 		}
+ 		n.selecting && (e.preventDefault(), e.stopPropagation());

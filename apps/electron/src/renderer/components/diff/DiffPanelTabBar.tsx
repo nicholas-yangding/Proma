@@ -51,7 +51,7 @@ interface DiffPanelTabBarProps {
   activeTab: AgentSidePanelTab
   onTabChange: (tab: AgentSidePanelTab) => void
   onCloseTab: (tab: AgentSidePanelTab) => void
-  onOpenBrowser: () => void
+  onOpenBrowser?: () => void
   /** 加号菜单是否展开；供原生浏览器视图临时避让。 */
   onAddTabMenuOpenChange?: (open: boolean) => void
   onOpenFile: () => void
@@ -478,7 +478,7 @@ export function DiffPanelTabBar({
               event.preventDefault()
             }}
           >
-            <DropdownMenuItem onSelect={onOpenBrowser}>
+            <DropdownMenuItem onSelect={onOpenBrowser} disabled={!onOpenBrowser}>
               <Globe className="size-3.5" />
               新建浏览器标签
             </DropdownMenuItem>

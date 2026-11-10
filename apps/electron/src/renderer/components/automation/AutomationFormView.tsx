@@ -353,14 +353,6 @@ export function AutomationFormView({ embedded = false }: { embedded?: boolean } 
     latestFormRef.current = form
   }, [form])
 
-  React.useEffect(() => {
-    return () => {
-      if (saveTimerRef.current !== undefined) {
-        window.clearTimeout(saveTimerRef.current)
-      }
-    }
-  }, [])
-
   const refreshAutomations = React.useCallback(async () => {
     const list = await window.electronAPI.listAutomations()
     setAutomations(list)
@@ -395,8 +387,8 @@ export function AutomationFormView({ embedded = false }: { embedded?: boolean } 
           if (!updated) throw new Error('定时任务不存在')
           lastSavedSignatureRef.current = signature
           setAutomations((prev) => prev.map((a) => (a.id === updated.id ? updated : a)))
-          setForm((prev) => (prev ? { ...prev, id: updated.id, name: updated.name } : prev))
           if (isMountedRef.current) {
+            setForm((prev) => (prev ? { ...prev, id: updated.id, name: updated.name } : prev))
             setSaveStatus('saved')
             setLastSavedAt(Date.now())
           }
@@ -406,8 +398,8 @@ export function AutomationFormView({ embedded = false }: { embedded?: boolean } 
           const createdDraft = automationToDraft(created)
           lastSavedSignatureRef.current = getDraftSignature(createdDraft)
           setAutomations((prev) => [created, ...prev.filter((a) => a.id !== created.id)])
-          setForm((prev) => (prev ? { ...prev, id: created.id, name: created.name } : prev))
           if (isMountedRef.current) {
+            setForm((prev) => (prev ? { ...prev, id: created.id, name: created.name } : prev))
             setSaveStatus('saved')
             setLastSavedAt(Date.now())
           }
@@ -431,6 +423,15 @@ export function AutomationFormView({ embedded = false }: { embedded?: boolean } 
     })
     return persistTask
   }, [setAutomations])
+
+  React.useEffect(() => function persistOnLeave() {
+    if (saveTimerRef.current !== undefined) {
+      window.clearTimeout(saveTimerRef.current)
+      saveTimerRef.current = undefined
+    }
+    const latest = latestFormRef.current
+    if (latest && canPersistDraft(latest)) void persistDraft(latest)
+  }, [persistDraft])
 
   React.useEffect(() => {
     if (!formState.open || !form || !canPersistDraft(form)) return

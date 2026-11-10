@@ -7,7 +7,7 @@
 
 import * as React from 'react'
 import { appModeAtom } from '@/atoms/app-mode'
-import { workspaceSessionIdAtom } from '@/atoms/workspace-session'
+import { workspacePanelScopeIdAtom } from '@/atoms/workspace-session'
 import { BotsView } from '@/components/bots/BotsView'
 import type { BrowserStateChange, BrowserTabFocusChange } from '@proma/shared'
 import { useAtom, useAtomValue, useSetAtom, useStore } from 'jotai'
@@ -26,7 +26,7 @@ import { PlanningView } from '@/components/planning/PlanningView'
 import { AgentSkillsView } from '@/components/agent-skills/AgentSkillsView'
 import { VaultView } from '@/components/vault/VaultView'
 import { automationFormAtom } from '@/atoms/automation-atoms'
-import { activeViewAtom } from '@/atoms/active-view'
+import { activeViewAtom, agentSkillsTabAtom } from '@/atoms/active-view'
 import { registerShortcut } from '@/lib/shortcut-registry'
 import {
   agentDiffPanelTabAtom,
@@ -44,7 +44,7 @@ import {
 export function MainArea(): React.ReactElement {
   useTrackSessionView()
   const appMode = useAtomValue(appModeAtom)
-  const workspaceSessionId = useAtomValue(workspaceSessionIdAtom)
+  const workspaceScopeId = useAtomValue(workspacePanelScopeIdAtom)
 
   const tabs = useAtomValue(tabsAtom)
   const activeTabId = useAtomValue(activeTabIdAtom)
@@ -52,6 +52,7 @@ export function MainArea(): React.ReactElement {
   const activeTab = useAtomValue(activeTabAtom)
   const automationFormOpen = useAtomValue(automationFormAtom).open
   const activeView = useAtomValue(activeViewAtom)
+  const agentSkillsTab = useAtomValue(agentSkillsTabAtom)
   const store = useStore()
 
   // TabBar 立即反馈，较重的中心内容可让出当前交互帧；Agent 历史则保持当前会话避免旧内容占屏。
@@ -59,11 +60,11 @@ export function MainArea(): React.ReactElement {
   const contentTabId = activeTab?.type === 'agent' ? activeTabId : deferredActiveTabId
   // Agent 会话从左侧历史列表切换，中心区不再重复展示同一组顶部 Tab。
   const showCenterTabBar = activeTab?.type !== 'agent'
-  const [isRightPanelOpen, setRightPanelOpen] = useAtom(agentSidePanelOpenAtomFamily(workspaceSessionId ?? ''))
+  const [isRightPanelOpen, setRightPanelOpen] = useAtom(agentSidePanelOpenAtomFamily(workspaceScopeId ?? ''))
   const toggleRightPanel = React.useCallback(() => {
-    if (!workspaceSessionId) return
+    if (!workspaceScopeId) return
     setRightPanelOpen(!isRightPanelOpen)
-  }, [workspaceSessionId, isRightPanelOpen, setRightPanelOpen])
+  }, [workspaceScopeId, isRightPanelOpen, setRightPanelOpen])
 
   // 不能依赖 TabBar 注册：Agent 会话已不渲染中心 TabBar，快捷键需要在常驻主内容区监听。
   React.useEffect(() => registerShortcut('toggle-right-panel', toggleRightPanel), [toggleRightPanel])
@@ -155,12 +156,14 @@ export function MainArea(): React.ReactElement {
     <Panel variant="grow" className="bg-content-area">
       <div className="flex flex-1 min-h-0 overflow-hidden">
         <div className="flex flex-1 flex-col min-w-0 h-full">
-          {appMode === 'bots' ? <BotsView /> : activeView === 'planning' ? (
+          {activeView === 'planning' ? (
             automationFormOpen ? <AutomationFormView /> : <PlanningView />
           ) : activeView === 'agent-skills' ? (
-            <AgentSkillsView />
+            <AgentSkillsView key={appMode === 'bots' ? agentSkillsTab : 'agent-skills'} />
           ) : activeView === 'vault' ? (
             <VaultView />
+          ) : appMode === 'bots' ? (
+            <BotsView />
           ) : (
             <>
               {showCenterTabBar && <TabBar />}

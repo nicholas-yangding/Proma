@@ -51,7 +51,7 @@ function VaultFocusChip({ attribution }: { attribution: VaultFocusAttribution })
     } else {
       setFocusedFolder(focus.relativePath)
     }
-    openWorkspaceComponent('vault')
+    openWorkspaceComponent({ scopeId: sessionId, component: 'vault' })
   }, [focus.kind, focus.relativePath, openWorkspaceComponent, sessionId, setFocusedFolder, setSelectedFile])
 
   return (
@@ -86,7 +86,7 @@ function SkillUsageChip({ activation }: { activation: SkillActivation }): React.
       skillSlug: activation.slug,
       ...(activation.workspaceSlug ? { workspaceSlug: activation.workspaceSlug } : {}),
     })
-    openWorkspaceComponent('skills')
+    openWorkspaceComponent({ scopeId: sessionId, component: 'skills' })
   }, [activation.slug, activation.workspaceSlug, openWorkspaceComponent, sessionId, setSkillDetailNavigation])
   const chipClassName = cn(
     'inline-flex max-w-[240px] items-center gap-[0.25em] rounded-md px-[0.35em] py-[0.15em] text-[0.875em] font-medium leading-none',

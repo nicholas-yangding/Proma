@@ -27,6 +27,8 @@ import {
 } from '@/atoms/agent-atoms'
 import { activeViewAtom } from '@/atoms/active-view'
 import { appModeAtom } from '@/atoms/app-mode'
+import { openBotsToolAtom } from '@/atoms/bots-navigation'
+import { workspacePanelScopeIdAtom } from '@/atoms/workspace-session'
 import { useOpenSession } from '@/hooks/useOpenSession'
 import { useCreateSession } from '@/hooks/useCreateSession'
 import { productivityToolsAtom, sessionHoverPreviewEnabledAtom } from '@/atoms/ui-preferences'
@@ -239,6 +241,8 @@ export function SearchDialog(): React.ReactElement {
   const currentAgentSessionId = useAtomValue(currentAgentSessionIdAtom)
   const vaultEnabled = useAtomValue(productivityToolsAtom).obsidianEnabled
   const openWorkspaceComponent = useSetAtom(openWorkspaceComponentAtom)
+  const openBotsTool = useSetAtom(openBotsToolAtom)
+  const workspacePanelScopeId = useAtomValue(workspacePanelScopeIdAtom)
   const requestVaultOpen = useSetAtom(vaultOpenRequestAtom)
   const currentAgentChannelId = useAtomValue(agentChannelIdAtom)
   const setAgentPendingPrompt = useSetAtom(agentPendingPromptAtom)
@@ -420,11 +424,16 @@ export function SearchDialog(): React.ReactElement {
         toast.info('这篇笔记超过 Vault 编辑器的 2 MB 上限，仍可检索正文')
         return
       }
-      const sessionId = appMode === 'agent' ? currentAgentSessionId : null
-      requestVaultOpen({ scope: getVaultSessionScope(sessionId ?? undefined), vaultId: result.vaultId, relativePath: result.relativePath })
+      const sessionId = selectedMode === 'agent' ? currentAgentSessionId : null
+      const vaultScope = selectedMode === 'bots' ? workspacePanelScopeId : sessionId
+      requestVaultOpen({ scope: getVaultSessionScope(vaultScope ?? undefined), vaultId: result.vaultId, relativePath: result.relativePath })
       setOpen(false)
+      if (selectedMode === 'bots') {
+        openBotsTool('vault')
+        return
+      }
       setActiveView(sessionId ? 'conversations' : 'vault')
-      if (sessionId) openWorkspaceComponent('vault')
+      if (sessionId) openWorkspaceComponent({ scopeId: sessionId, component: 'vault' })
       return
     }
     setOpen(false)
@@ -439,7 +448,7 @@ export function SearchDialog(): React.ReactElement {
       const title = session?.title ?? result.title
       openSession('agent', result.id, title)
     }
-  }, [appMode, canOpenResults, currentAgentSessionId, requestVaultOpen, openWorkspaceComponent, setOpen, setActiveView, openSession, conversations, agentSessions])
+  }, [selectedMode, canOpenResults, currentAgentSessionId, requestVaultOpen, openBotsTool, openWorkspaceComponent, workspacePanelScopeId, setOpen, setActiveView, openSession, conversations, agentSessions])
 
   const handleKeyDown = React.useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
     if (composing || e.nativeEvent.isComposing || !canOpenResults) return

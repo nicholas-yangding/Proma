@@ -903,8 +903,8 @@ function ScheduledRunBadge(): React.ReactElement {
     : undefined
 
   const handleClick = (): void => {
-    if (!automation) return
-    openWorkspaceComponent('automations')
+    if (!automation || !activeSessionId) return
+    openWorkspaceComponent({ scopeId: activeSessionId, component: 'automations' })
     setForm({
       open: true,
       draft: automationToDraft(automation),

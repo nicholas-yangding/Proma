@@ -15,12 +15,14 @@ import { Pin, PinOff, Star, Settings, Plus, CirclePlus, Trash2, Pencil, PanelLef
 import { cn } from '@/lib/utils'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { ModeSwitcher } from './ModeSwitcher'
+import { WorkspaceComponentSidebarEntry } from './WorkspaceComponentSidebarEntry'
 import { SearchDialog } from './SearchDialog'
 import { UserAvatar } from '@/components/chat/UserAvatar'
 import { activeViewAtom, agentSkillsTabAtom } from '@/atoms/active-view'
 import { automationFormAtom, automationsAtom } from '@/atoms/automation-atoms'
 import { planningTabAtom } from '@/atoms/planning-atoms'
 import { appModeAtom, type AppMode } from '@/atoms/app-mode'
+import { openBotsToolAtom } from '@/atoms/bots-navigation'
 import { settingsOpenAtom, settingsTabAtom } from '@/atoms/settings-tab'
 import {
   conversationsAtom,
@@ -251,39 +253,6 @@ function SidebarUpdateButton({
       </TooltipTrigger>
       <TooltipContent side={tooltipSide}>{label}</TooltipContent>
     </Tooltip>
-  )
-}
-
-interface WorkspaceComponentSidebarEntryProps {
-  label: string
-  icon: React.ReactNode
-  active: boolean
-  onClick: () => void
-  badge?: React.ReactNode
-}
-
-/** 左侧项目级组件的单行入口；每项只打开一个对应的右侧 Tab。 */
-function WorkspaceComponentSidebarEntry({ label, icon, active, onClick, badge }: WorkspaceComponentSidebarEntryProps): React.ReactElement {
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      onClick={onClick}
-      className={cn(
-        'group flex w-full items-center justify-between rounded-md px-3 py-2 text-[13px] transition-colors duration-100 titlebar-no-drag',
-        active
-          ? 'bg-accent-foreground/[0.10] text-[hsl(var(--sidebar-primary-foreground))] shadow-[0_1px_2px_0_rgba(0,0,0,0.05)]'
-          : 'text-[hsl(var(--sidebar-primary-foreground))] hover:bg-accent-foreground/[0.08] hover:text-[hsl(var(--sidebar-primary-foreground))]',
-      )}
-    >
-      <span className="flex min-w-0 items-center gap-3">
-        <span className={cn('flex size-[18px] shrink-0 items-center justify-center', active ? 'text-accent-foreground' : 'text-[hsl(var(--sidebar-primary-foreground))]')}>
-          {icon}
-        </span>
-        <span className="truncate">{label}</span>
-      </span>
-      {badge && <span className="ml-2 flex shrink-0 items-center">{badge}</span>}
-    </button>
   )
 }
 
@@ -606,6 +575,7 @@ export function LeftSidebar({ width, noTransition }: LeftSidebarProps): React.Re
   const setPlanningTab = useSetAtom(planningTabAtom)
   const setAgentSkillsTab = useSetAtom(agentSkillsTabAtom)
   const openWorkspaceComponent = useSetAtom(openWorkspaceComponentAtom)
+  const openBotsTool = useSetAtom(openBotsToolAtom)
   const automations = useAtomValue(automationsAtom)
   const setAutomations = useSetAtom(automationsAtom)
   const automationCount = automations.length
@@ -1015,6 +985,10 @@ export function LeftSidebar({ width, noTransition }: LeftSidebarProps): React.Re
 
   /** 规划与能力不再替换主内容区，而是作为项目级右侧组件逐项打开。 */
   const handleOpenPlanningComponent = React.useCallback((component: 'todos' | 'calendar' | 'automations'): void => {
+    if (mode === 'bots') {
+      openBotsTool(component)
+      return
+    }
     setAutomationForm({ open: false, draft: null })
     // 尚未创建会话时没有右侧宿主，保留原全屏规划视图作为无损兜底。
     if (mode !== 'agent' || !currentAgentSessionId) {
@@ -1023,40 +997,52 @@ export function LeftSidebar({ width, noTransition }: LeftSidebarProps): React.Re
       return
     }
     setActiveView('conversations')
-    openWorkspaceComponent(component)
-  }, [currentAgentSessionId, mode, openWorkspaceComponent, setAutomationForm, setActiveView, setPlanningTab])
+    openWorkspaceComponent({ scopeId: currentAgentSessionId, component })
+  }, [currentAgentSessionId, mode, openBotsTool, openWorkspaceComponent, setAutomationForm, setActiveView, setPlanningTab])
 
   /** Obsidian 在 Chat 中占用主内容区，在有 Agent 会话时复用右侧项目级工作区。 */
   const handleOpenVault = React.useCallback((): void => {
+    if (mode === 'bots') {
+      openBotsTool('vault')
+      return
+    }
     if (mode !== 'agent' || !currentAgentSessionId) {
       setActiveView('vault')
       return
     }
     setActiveView('conversations')
-    openWorkspaceComponent('vault')
-  }, [currentAgentSessionId, mode, openWorkspaceComponent, setActiveView])
+    openWorkspaceComponent({ scopeId: currentAgentSessionId, component: 'vault' })
+  }, [currentAgentSessionId, mode, openBotsTool, openWorkspaceComponent, setActiveView])
 
   const handleOpenCapabilityComponent = React.useCallback((component: 'skills' | 'mcp' | 'memory'): void => {
+    if (mode === 'bots') {
+      openBotsTool(component === 'memory' ? 'memory' : 'capabilities')
+      return
+    }
     if (mode !== 'agent' || !currentAgentSessionId) {
       setAgentSkillsTab(component)
       setActiveView('agent-skills')
       return
     }
     setActiveView('conversations')
-    openWorkspaceComponent(component)
-  }, [currentAgentSessionId, mode, openWorkspaceComponent, setActiveView, setAgentSkillsTab])
+    openWorkspaceComponent({ scopeId: currentAgentSessionId, component })
+  }, [currentAgentSessionId, mode, openBotsTool, openWorkspaceComponent, setActiveView, setAgentSkillsTab])
 
   /** MCP/Skills 为同一低频管理入口；在右侧工作区中一次展开两个独立 Tab，保留 Skills 为当前焦点。 */
   const handleOpenMcpSkillsComponents = React.useCallback((): void => {
+    if (mode === 'bots') {
+      openBotsTool('capabilities')
+      return
+    }
     if (mode !== 'agent' || !currentAgentSessionId) {
       setAgentSkillsTab('skills')
       setActiveView('agent-skills')
       return
     }
     setActiveView('conversations')
-    openWorkspaceComponent('mcp')
-    openWorkspaceComponent('skills')
-  }, [currentAgentSessionId, mode, openWorkspaceComponent, setActiveView, setAgentSkillsTab])
+    openWorkspaceComponent({ scopeId: currentAgentSessionId, component: 'mcp' })
+    openWorkspaceComponent({ scopeId: currentAgentSessionId, component: 'skills' })
+  }, [currentAgentSessionId, mode, openBotsTool, openWorkspaceComponent, setActiveView, setAgentSkillsTab])
 
   // 切换模式时重置归档视图
   React.useEffect(() => {

@@ -21,8 +21,10 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
-import { agentPendingPromptAtom, agentSessionDraftHtmlAtom, agentSessionDraftsAtom, agentSessionDraftSyncVersionsAtom, currentAgentSessionIdAtom, skillDetailNavigationAtomFamily, workspaceCapabilitiesVersionAtom } from '@/atoms/agent-atoms'
+import { agentPendingPromptAtom, agentSessionDraftHtmlAtom, agentSessionDraftsAtom, agentSessionDraftSyncVersionsAtom, agentSessionsAtom, currentAgentSessionIdAtom, skillDetailNavigationAtomFamily, workspaceCapabilitiesVersionAtom } from '@/atoms/agent-atoms'
 import { agentSkillsTabAtom } from '@/atoms/active-view'
+import { appModeAtom } from '@/atoms/app-mode'
+import { botsActiveConversationAtom, botsDraftsAtom, botsWorkspaceSessionIdAtom } from '@/atoms/bot-atoms'
 import { useProjectActions } from '@/hooks/useProjectActions'
 import { useCreateSession } from '@/hooks/useCreateSession'
 import { McpServerForm } from '@/components/settings/McpServerForm'
@@ -104,7 +106,7 @@ export function AgentSkillsView({
   componentTab,
   workspaceId,
   sessionId,
-}: { embedded?: boolean; componentTab?: 'skills' | 'mcp'; workspaceId?: string; sessionId?: string } = {}): React.ReactElement {
+}: { embedded?: boolean; componentTab?: 'skills' | 'mcp'; workspaceId?: string | null; sessionId?: string } = {}): React.ReactElement {
   const data = useAgentSkillsData(workspaceId)
   const bumpCapabilities = useSetAtom(workspaceCapabilitiesVersionAtom)
   const store = useStore()
@@ -112,14 +114,51 @@ export function AgentSkillsView({
   const setDraftHtml = useSetAtom(agentSessionDraftHtmlAtom)
   const setDraftSyncVersions = useSetAtom(agentSessionDraftSyncVersionsAtom)
   const setPendingPrompt = useSetAtom(agentPendingPromptAtom)
+  const setBotsDrafts = useSetAtom(botsDraftsAtom)
+  const appMode = useAtomValue(appModeAtom)
   const currentAgentSessionId = useAtomValue(currentAgentSessionIdAtom)
   const skillDetailNavigation = useAtomValue(skillDetailNavigationAtomFamily(sessionId ?? ''))
   const setSkillDetailNavigation = useSetAtom(skillDetailNavigationAtomFamily(sessionId ?? ''))
   const { workspaces, currentWorkspaceId: selectedWorkspaceId, selectProject } = useProjectActions()
   const { createAgent } = useCreateSession()
-  const currentWorkspace = workspaces.find((workspace) => workspace.id === (workspaceId ?? selectedWorkspaceId))
+  const currentWorkspaceId = workspaceId === undefined ? selectedWorkspaceId : workspaceId
+  const currentWorkspace = workspaces.find((workspace) => workspace.id === currentWorkspaceId)
 
-  const fillCurrentAgentPrompt = React.useCallback((message: string): boolean => {
+  const prepareAgentPrompt = React.useCallback(async (message: string): Promise<boolean> => {
+    const botConversation = store.get(botsActiveConversationAtom)
+    if (appMode === 'bots' && sessionId && botConversation
+      && store.get(botsWorkspaceSessionIdAtom) === sessionId
+      && botConversation.bindings.some((binding) => binding.sessionId === sessionId)) {
+      const conversationId = botConversation.conversation.id
+      setBotsDrafts((previous) => {
+        const currentDraft = previous[conversationId] ?? ''
+        const nextDraft = currentDraft.trim() ? `${currentDraft.trimEnd()}\n\n${message}` : message
+        return { ...previous, [conversationId]: nextDraft }
+      })
+      return true
+    }
+
+    if (!sessionId && appMode === 'bots') {
+      if (!currentWorkspace) {
+        toast.error('当前项目不可用，请重新选择项目')
+        return false
+      }
+      const createdSessionId = await createAgent({ workspaceId: currentWorkspace.id })
+      if (!createdSessionId) {
+        toast.error('创建 Agent 会话失败')
+        return false
+      }
+      setPendingPrompt({ sessionId: createdSessionId, message })
+      return true
+    }
+
+    if (appMode === 'bots' && sessionId
+      && (botConversation?.bindings.some((binding) => binding.sessionId === sessionId)
+        || store.get(agentSessionsAtom).some((session) => session.id === sessionId && session.botContext))) {
+      toast.error('Bot 工作区已切换，请重新打开当前工具')
+      return false
+    }
+
     const targetSessionId = sessionId ?? currentAgentSessionId
     if (!targetSessionId) {
       toast.error('请先打开一个 Agent 会话')
@@ -155,7 +194,7 @@ export function AgentSkillsView({
       return next
     })
     return true
-  }, [currentAgentSessionId, sessionId, setDraftHtml, setDraftSyncVersions, setDrafts, store])
+  }, [appMode, createAgent, currentAgentSessionId, currentWorkspace, sessionId, setBotsDrafts, setDraftHtml, setDraftSyncVersions, setDrafts, setPendingPrompt, store])
 
   const [storedTab, setTab] = useAtom(agentSkillsTabAtom)
   // 右侧组件锁定能力域，避免其内部的总览 Tab 与右侧工作区标签产生两套导航。
@@ -272,11 +311,11 @@ export function AgentSkillsView({
     })
   }
 
-  const guideCatalogMcp = React.useCallback((integration: CatalogMcpIntegration): void => {
-    if (fillCurrentAgentPrompt(buildCatalogMcpGuidePrompt(integration))) {
+  const guideCatalogMcp = React.useCallback(async (integration: CatalogMcpIntegration): Promise<void> => {
+    if (await prepareAgentPrompt(buildCatalogMcpGuidePrompt(integration))) {
       toast.success(`已填入 ${integration.name} 配置提示词`)
     }
-  }, [fillCurrentAgentPrompt])
+  }, [prepareAgentPrompt])
 
   const installCatalogMcp = React.useCallback(async (integration: CatalogMcpIntegration): Promise<void> => {
     if (installingCatalogMcpId) return
@@ -424,10 +463,10 @@ export function AgentSkillsView({
       return
     }
 
-    if (fillCurrentAgentPrompt(integration.agentPrompt)) {
+    if (await prepareAgentPrompt(integration.agentPrompt)) {
       toast.success(`已填入 ${integration.name} 配置提示词`)
     }
-  }, [data, fillCurrentAgentPrompt])
+  }, [data, prepareAgentPrompt])
 
   const disconnectCatalogCli = React.useCallback(async (integration: CatalogCliIntegration): Promise<void> => {
     try {
@@ -438,21 +477,21 @@ export function AgentSkillsView({
     }
   }, [data])
 
-  const guideCatalogIntegration = React.useCallback((integration: CatalogGuidedIntegration): void => {
-    if (fillCurrentAgentPrompt(integration.agentPrompt)) {
+  const guideCatalogIntegration = React.useCallback(async (integration: CatalogGuidedIntegration): Promise<void> => {
+    if (await prepareAgentPrompt(integration.agentPrompt)) {
       toast.success(`已填入 ${integration.name} 配置提示词`)
     }
-  }, [fillCurrentAgentPrompt])
+  }, [prepareAgentPrompt])
 
   const handleClassifySkills = React.useCallback(async (): Promise<void> => {
     if (classifyingSkills) return
-    if (!data.skillsDir) {
+    if (!currentWorkspace || !data.skillsDir) {
       toast.error('无法定位当前项目的 Proma 工作区 Skills 目录')
       return
     }
     setClassifyingSkills(true)
     try {
-      const sessionId = await createAgent()
+      const sessionId = await createAgent({ workspaceId: currentWorkspace.id })
       if (!sessionId) {
         toast.error('创建 Agent 会话失败')
         return
@@ -472,7 +511,7 @@ export function AgentSkillsView({
     } finally {
       setClassifyingSkills(false)
     }
-  }, [classifyingSkills, createAgent, data.skills, data.skillsDir, data.workspaceName, setPendingPrompt])
+  }, [classifyingSkills, createAgent, currentWorkspace, data.skills, data.skillsDir, data.workspaceName, setPendingPrompt])
 
   const skillDeleteDialog = (
     <ConfirmDialog

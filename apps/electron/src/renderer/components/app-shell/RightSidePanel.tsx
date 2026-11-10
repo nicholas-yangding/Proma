@@ -19,21 +19,29 @@ import {
 } from '@/atoms/agent-atoms'
 import type { AgentSidePanelTab } from '@/atoms/agent-atoms'
 import { SidePanel } from '@/components/agent/SidePanel'
-import { workspaceSessionIdAtom } from '@/atoms/workspace-session'
-import { botsActiveConversationAtom } from '@/atoms/bot-atoms'
+import { getBotsConversationScopeId, migrateWorkspacePanelScopeAtom, workspacePanelTargetAtom } from '@/atoms/workspace-session'
+import { botsActiveConversationIdAtom } from '@/atoms/bot-atoms'
 import { agentSidePanelOpenAtomFamily } from '@/atoms/agent-atoms'
 import { browserFocusRequestMapAtom, browserPanelOpenMapAtom, browserStateMapAtom } from '@/atoms/browser-atoms'
 import { getPreviewFileId, previewFileMapAtom } from '@/atoms/preview-atoms'
 
 export function RightSidePanel({ width }: { width?: number }): React.ReactElement | null {
   const appMode = useAtomValue(appModeAtom)
-  const botConversation = useAtomValue(botsActiveConversationAtom)
-  const currentSessionId = useAtomValue(workspaceSessionIdAtom)
+  const conversationId = useAtomValue(botsActiveConversationIdAtom)
+  const target = useAtomValue(workspacePanelTargetAtom)
+  const currentSessionId = target?.sessionId ?? null
+  const scopeId = target?.scopeId ?? null
+  const migrateScope = useSetAtom(migrateWorkspacePanelScopeAtom)
+  React.useLayoutEffect(() => {
+    if (appMode === 'bots' && conversationId && currentSessionId) {
+      migrateScope({ fromScopeId: getBotsConversationScopeId(conversationId), toScopeId: currentSessionId })
+    }
+  }, [appMode, conversationId, currentSessionId, migrateScope])
   const sessionPathMap = useAtomValue(agentSessionPathMapAtom)
   const diffPanelTabMap = useAtomValue(agentDiffPanelTabAtom)
   const setDiffPanelTabMap = useSetAtom(agentDiffPanelTabAtom)
   const setTerminalTabsMap = useSetAtom(agentTerminalTabsAtom)
-  const setSidePanelOpen = useSetAtom(agentSidePanelOpenAtomFamily(currentSessionId ?? ''))
+  const setSidePanelOpen = useSetAtom(agentSidePanelOpenAtomFamily(scopeId ?? ''))
   const browserOpenMap = useAtomValue(browserPanelOpenMapAtom)
   const browserStateMap = useAtomValue(browserStateMapAtom)
   const browserFocusRequestMap = useAtomValue(browserFocusRequestMapAtom)
@@ -47,13 +55,13 @@ export function RightSidePanel({ width }: { width?: number }): React.ReactElemen
   const pendingBrowserActivationRef = React.useRef<string | null>(null)
 
   const setActiveTab = React.useCallback((tab: AgentSidePanelTab) => {
-    if (!currentSessionId) return
+    if (!scopeId) return
     setDiffPanelTabMap((prev) => {
       const map = new Map(prev)
-      map.set(currentSessionId, tab)
+      map.set(scopeId, tab)
       return map
     })
-  }, [currentSessionId, setDiffPanelTabMap])
+  }, [scopeId, setDiffPanelTabMap])
 
   // 首次打开浏览器时承接到右侧工作区；Agent 回复链接还会显式携带目标标签，
   // 即使当前浏览器已打开，也应切换到那个新网页而不是留在文件、Diff 或终端。
@@ -135,12 +143,12 @@ export function RightSidePanel({ width }: { width?: number }): React.ReactElemen
     pendingBrowserActivationRef.current = null
   }, [browserFocusRequestTabId, browserOpen, browserState?.activeTabId, browserState?.tabs, currentSessionId, setBrowserFocusRequestMap, setDiffPanelTabMap, setSidePanelOpen])
 
-  if ((appMode !== 'agent' && appMode !== 'bots') || !currentSessionId) {
+  if ((appMode !== 'agent' && appMode !== 'bots') || !target) {
     return null
   }
 
-  const sessionPath = sessionPathMap.get(currentSessionId) ?? null
-  const storedTab = diffPanelTabMap.get(currentSessionId) ?? 'files'
+  const sessionPath = currentSessionId ? sessionPathMap.get(currentSessionId) ?? null : null
+  const storedTab = diffPanelTabMap.get(target.scopeId) ?? 'files'
   // 兼容这次扁平化前内存中的旧“浏览器”工作区值。
   const activeTab: AgentSidePanelTab = storedTab === 'browser'
     ? browserState?.activeTabId ? getBrowserSidePanelTab(browserState.activeTabId) : 'files'
@@ -150,12 +158,13 @@ export function RightSidePanel({ width }: { width?: number }): React.ReactElemen
 
   return (
     <SidePanel
-      sessionId={currentSessionId}
+      scopeId={target.scopeId}
+      sessionId={target.sessionId}
       sessionPath={sessionPath}
       activeTab={activeTab}
       onTabChange={setActiveTab}
       width={width}
-      workspaceId={appMode === 'bots' ? botConversation?.conversation.workspaceId : undefined}
+      workspaceId={target.workspaceId}
     />
   )
 }

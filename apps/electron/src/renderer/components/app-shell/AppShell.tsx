@@ -11,7 +11,7 @@ import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { LeftSidebar } from './LeftSidebar'
 import { BotsSidebar } from '@/components/bots/BotsSidebar'
 import { useBotsEvents } from '@/components/bots/useBotsEvents'
-import { workspaceSessionIdAtom } from '@/atoms/workspace-session'
+import { retainedWorkspacePanelScopesAtom, workspacePanelScopeIdAtom, workspacePanelTargetAtom } from '@/atoms/workspace-session'
 import { agentSidePanelOpenAtomFamily } from '@/atoms/agent-atoms'
 import { RightSidePanel } from './RightSidePanel'
 import { MainArea } from '@/components/tabs/MainArea'
@@ -20,7 +20,6 @@ import { agentDiffPanelTabAtom, agentSessionComponentOpenMapAtom, agentSessionsA
 import { leftSidebarWidthAtom } from '@/atoms/sidebar-atoms'
 import { sidebarCollapsedAtom } from '@/atoms/tab-atoms'
 import { clampRightPanelWidth, getRightPanelMaxWidth, getWorkspaceDragWidth } from './right-panel-layout'
-import { automationFormAtom } from '@/atoms/automation-atoms'
 import { activeViewAtom } from '@/atoms/active-view'
 import { productivityToolsAtom } from '@/atoms/ui-preferences'
 import { useProjectActions } from '@/hooks/useProjectActions'
@@ -79,15 +78,16 @@ export function AppShell(): React.ReactElement {
   useBotsEvents()
   const appMode = useAtomValue(appModeAtom)
   const { workspaces, currentWorkspaceId } = useProjectActions()
-  const currentWorkspace = workspaces.find((workspace) => workspace.id === currentWorkspaceId)
-  const currentSessionId = useAtomValue(workspaceSessionIdAtom)
-  const activeRightPanelTab = useAtomValue(agentDiffPanelTabAtom).get(currentSessionId ?? '')
+  const workspaceTarget = useAtomValue(workspacePanelTargetAtom)
+  const currentWorkspace = workspaces.find((workspace) => workspace.id === (appMode === 'bots' ? workspaceTarget?.workspaceId : currentWorkspaceId))
+  const workspaceScopeId = useAtomValue(workspacePanelScopeIdAtom)
+  const retainedWorkspaceScopes = useAtomValue(retainedWorkspacePanelScopesAtom)
+  const activeRightPanelTab = useAtomValue(agentDiffPanelTabAtom).get(workspaceScopeId ?? '')
   const setAgentDiffPanelTabs = useSetAtom(agentDiffPanelTabAtom)
   const setAgentSessionComponentOpenMap = useSetAtom(agentSessionComponentOpenMapAtom)
-  const activeRightPanelSplit = useAtomValue(agentSidePanelSplitMapAtom).get(currentSessionId ?? '') ?? null
-  const isPanelOpen = useAtomValue(agentSidePanelOpenAtomFamily(currentSessionId ?? ''))
+  const activeRightPanelSplit = useAtomValue(agentSidePanelSplitMapAtom).get(workspaceScopeId ?? '') ?? null
+  const isPanelOpen = useAtomValue(agentSidePanelOpenAtomFamily(workspaceScopeId ?? ''))
   const workspacePosition = useAtomValue(agentWorkspacePositionAtom)
-  const automationForm = useAtomValue(automationFormAtom)
   const settingsOpen = useAtomValue(settingsOpenAtom)
   const setSettingsOpen = useSetAtom(settingsOpenAtom)
   const appContentRef = React.useRef<HTMLDivElement>(null)
@@ -97,7 +97,6 @@ export function AppShell(): React.ReactElement {
     appContentRef.current?.toggleAttribute('inert', settingsOpen)
   }, [settingsOpen])
 
-  // 定时任务表单打开时隐藏右侧文件面板，让中间区域扩展到全宽（表单内含自己的右栏配置）
   const [activeView, setActiveView] = useAtom(activeViewAtom)
   const productivityTools = useAtomValue(productivityToolsAtom)
   React.useEffect(() => {
@@ -129,7 +128,7 @@ export function AppShell(): React.ReactElement {
       return changed ? next : previous
     })
   }, [activeView, productivityTools.calendarEnabled, productivityTools.obsidianEnabled, productivityTools.todosEnabled, setActiveView, setAgentDiffPanelTabs, setAgentSessionComponentOpenMap])
-  const showRightPanel = (appMode === 'agent' || appMode === 'bots') && !!currentSessionId && !(automationForm.open && activeView !== 'conversations') && activeView !== 'planning' && activeView !== 'agent-skills'
+  const showRightPanel = (appMode === 'agent' || appMode === 'bots') && !!workspaceScopeId && activeView === 'conversations'
   const workspaceCentered = workspacePosition === 'center' && showRightPanel && isPanelOpen && activeView === 'conversations'
   const isWindows = React.useMemo(() => detectIsWindows(), [])
 
@@ -194,13 +193,13 @@ export function AppShell(): React.ReactElement {
   const setFileBrowserExpandedPaths = useSetAtom(fileBrowserExpandedPathsAtom)
   const setFileBrowserScrollTopMap = useSetAtom(fileBrowserScrollTopMapAtom)
   const setRightPanelSplitMap = useSetAtom(agentSidePanelSplitMapAtom)
-  const [rightPanelLayout, setRightPanelLayout] = useAtom(agentSidePanelLayoutAtomFamily(currentSessionId ?? ''))
+  const [rightPanelLayout, setRightPanelLayout] = useAtom(agentSidePanelLayoutAtomFamily(workspaceScopeId ?? ''))
   const [viewportWidth, setViewportWidth] = React.useState(() => window.innerWidth)
   const dragging = React.useRef(false)
-  const currentSessionIdRef = React.useRef(currentSessionId)
+  const workspaceScopeIdRef = React.useRef(workspaceScopeId)
   const rightPanelDragCleanup = React.useRef<(() => void) | null>(null)
   const [draggedRightPanelWidth, setDraggedRightPanelWidth] = React.useState<number | null>(null)
-  currentSessionIdRef.current = currentSessionId
+  workspaceScopeIdRef.current = workspaceScopeId
   const isExpandedRightWorkspace = isExpandedWorkspaceTab(activeRightPanelTab)
   // 普通宽度必须独立计算：分屏的临时 720px 下限不能被 effect 写回 Session 的普通 width。
   const ordinaryRightPanelMinimumWidth = getRightPanelMinWidth(
@@ -255,26 +254,31 @@ export function AppShell(): React.ReactElement {
 
   React.useLayoutEffect(() => {
     return () => rightPanelDragCleanup.current?.()
-  }, [currentSessionId, isPanelOpen, workspaceCentered])
+  }, [workspaceScopeId, isPanelOpen, workspaceCentered])
 
   React.useEffect(() => {
-    setRightPanelLayouts((previous) => pruneAgentSidePanelLayouts(previous, agentSessions, currentSessionId ?? undefined))
-    const retainedSessionIds = new Set(agentSessions.map((session) => session.id))
-    if (currentSessionId) retainedSessionIds.add(currentSessionId)
-    setFileBrowserExpandedPaths((previous) => pruneFileBrowserStateMap(previous, retainedSessionIds))
-    setFileBrowserScrollTopMap((previous) => pruneFileBrowserStateMap(previous, retainedSessionIds))
+    setRightPanelLayouts((previous) => {
+      const next = { ...pruneAgentSidePanelLayouts(previous, agentSessions, workspaceScopeId ?? undefined) }
+      const agentSessionIds = new Set(agentSessions.map((session) => session.id))
+      for (const scope of retainedWorkspaceScopes) {
+        if (!agentSessionIds.has(scope) && previous[scope]) next[scope] = previous[scope]
+      }
+      return next
+    })
+    setFileBrowserExpandedPaths((previous) => pruneFileBrowserStateMap(previous, retainedWorkspaceScopes))
+    setFileBrowserScrollTopMap((previous) => pruneFileBrowserStateMap(previous, retainedWorkspaceScopes))
     setRightPanelSplitMap((previous) => {
-      const next = new Map([...previous].filter(([sessionId]) => retainedSessionIds.has(sessionId)))
+      const next = new Map([...previous].filter(([scope]) => retainedWorkspaceScopes.has(scope)))
       return next.size === previous.size ? previous : next
     })
-  }, [agentSessions, currentSessionId, setFileBrowserExpandedPaths, setFileBrowserScrollTopMap, setRightPanelLayouts, setRightPanelSplitMap])
+  }, [agentSessions, retainedWorkspaceScopes, workspaceScopeId, setFileBrowserExpandedPaths, setFileBrowserScrollTopMap, setRightPanelLayouts, setRightPanelSplitMap])
 
   React.useEffect(() => {
     // 分屏本身是临时宽布局，不能因为其中一个 Pane 是 Browser/Preview 就污染退出后的宽度。
-    if (!activeRightPanelSplit && isExpandedRightWorkspace && currentSessionId && !rightPanelLayout.hasOpenedWideWorkspace) {
+    if (!activeRightPanelSplit && isExpandedRightWorkspace && workspaceScopeId && !rightPanelLayout.hasOpenedWideWorkspace) {
       setRightPanelLayout((previous) => ({ ...previous, hasOpenedWideWorkspace: true }))
     }
-  }, [activeRightPanelSplit, currentSessionId, isExpandedRightWorkspace, rightPanelLayout.hasOpenedWideWorkspace, setRightPanelLayout])
+  }, [activeRightPanelSplit, workspaceScopeId, isExpandedRightWorkspace, rightPanelLayout.hasOpenedWideWorkspace, setRightPanelLayout])
 
   React.useEffect(() => {
     const updateViewportWidth = () => setViewportWidth(window.innerWidth)
@@ -283,18 +287,18 @@ export function AppShell(): React.ReactElement {
   }, [])
 
   React.useEffect(() => {
-    if (!workspaceCentered && currentSessionId && clampedRightPanelWidth !== rightPanelLayout.width) {
+    if (!workspaceCentered && workspaceScopeId && clampedRightPanelWidth !== rightPanelLayout.width) {
       setRightPanelLayout((previous) => ({ ...previous, width: clampedRightPanelWidth }))
     }
-  }, [clampedRightPanelWidth, currentSessionId, rightPanelLayout.width, setRightPanelLayout, workspaceCentered])
+  }, [clampedRightPanelWidth, workspaceScopeId, rightPanelLayout.width, setRightPanelLayout, workspaceCentered])
 
   const handleMouseDown = React.useCallback((e: React.MouseEvent) => {
-    if (!currentSessionId) return
+    if (!workspaceScopeId) return
 
     e.preventDefault()
     rightPanelDragCleanup.current?.()
     dragging.current = true
-    const dragSessionId = currentSessionId
+    const dragSessionId = workspaceScopeId
     const startX = e.clientX
     const startWidth = displayedRightPanelWidth
     const isWideWorkspace = usesWidePanelLayout || isExpandedRightWorkspace
@@ -351,7 +355,7 @@ export function AppShell(): React.ReactElement {
       if (rightPanelDragCleanup.current === cancelDrag) rightPanelDragCleanup.current = null
 
       // 会话切换后取消旧拖拽，不能把旧闭包的尺寸写入先前的 Session。
-      if (persist && currentSessionIdRef.current === dragSessionId) {
+      if (persist && workspaceScopeIdRef.current === dragSessionId) {
         setRightPanelLayout((previous) => {
           if (workspaceCentered) return { ...previous, centerWidth: latestWidth }
           return isWideWorkspace
@@ -381,7 +385,7 @@ export function AppShell(): React.ReactElement {
     rightPanelDragCleanup.current = cancelDrag
     document.addEventListener('mousemove', onMouseMove)
     document.addEventListener('mouseup', onMouseUp)
-  }, [activeRightPanelSplit, canAutoCollapseSidebarForRightPanel, clampedLeftSidebarWidth, currentSessionId, displayedRightPanelWidth, isExpandedRightWorkspace, leftSidebarOccupiedWidth, rightPanelLayout.hasOpenedWideWorkspace, rightPanelMinimumWidth, setRightPanelLayout, setSidebarCollapsed, sidebarCollapsed, usesWidePanelLayout, viewportWidth, workspaceCentered])
+  }, [activeRightPanelSplit, canAutoCollapseSidebarForRightPanel, clampedLeftSidebarWidth, workspaceScopeId, displayedRightPanelWidth, isExpandedRightWorkspace, leftSidebarOccupiedWidth, rightPanelLayout.hasOpenedWideWorkspace, rightPanelMinimumWidth, setRightPanelLayout, setSidebarCollapsed, sidebarCollapsed, usesWidePanelLayout, viewportWidth, workspaceCentered])
 
   return (
     <>

@@ -9,7 +9,7 @@ import { SettingsCard } from '@/components/settings/primitives'
 import { AgentActionHint } from '@/components/agent/AgentActionHint'
 import { WorkspaceMemoryChangeShelf } from './WorkspaceMemoryChangeShelf'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { agentPendingPromptAtom } from '@/atoms/agent-atoms'
+import { agentPendingPromptAtom, agentWorkspacesAtom } from '@/atoms/agent-atoms'
 import { memoryFileNavigationAtom, workspaceMemoryChangesAtom } from '@/atoms/memory-change-atoms'
 import { useCreateSession } from '@/hooks/useCreateSession'
 import { cn } from '@/lib/utils'
@@ -72,6 +72,7 @@ function filterNodes(nodes: SkillFileNode[], query: string, contentMatchPaths = 
 
 export function WorkspaceMemoryTab({ workspaceSlug, sessionId, search, embedded = false, onCloseChangeView }: WorkspaceMemoryTabProps): React.ReactElement {
   const { createAgent } = useCreateSession()
+  const workspaces = useAtomValue(agentWorkspacesAtom)
   const setPendingPrompt = useSetAtom(agentPendingPromptAtom)
   const [memoryNavigationRequest, setMemoryNavigationRequest] = useAtom(memoryFileNavigationAtom)
   const workspaceMemoryChanges = useAtomValue(workspaceMemoryChangesAtom)
@@ -345,10 +346,15 @@ export function WorkspaceMemoryTab({ workspaceSlug, sessionId, search, embedded 
 
 
   const startGuidedSession = async (message: string, kind: 'bootstrap' | 'history'): Promise<void> => {
+    const workspace = workspaces.find((item) => item.slug === workspaceSlug)
+    if (!workspace) {
+      toast.error('当前项目不可用，请重新选择项目')
+      return
+    }
     const setLoadingState = kind === 'bootstrap' ? setBootstrapping : setScanningHistory
     setLoadingState(true)
     try {
-      const sessionId = await createAgent()
+      const sessionId = await createAgent({ workspaceId: workspace.id })
       if (!sessionId) {
         toast.error('创建 Agent 会话失败')
         return

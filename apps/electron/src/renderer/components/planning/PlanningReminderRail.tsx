@@ -4,7 +4,9 @@ import { BellRing, Check, ListTodo, X } from 'lucide-react'
 import { toast } from 'sonner'
 import type { ActivePlanningReminder } from '@proma/shared'
 import { activePlanningRemindersAtom, planningSelectedTodoIdAtom } from '@/atoms/planning-atoms'
-import { openWorkspaceComponentAtom } from '@/atoms/agent-atoms'
+import { currentAgentSessionIdAtom, openWorkspaceComponentAtom } from '@/atoms/agent-atoms'
+import { appModeAtom } from '@/atoms/app-mode'
+import { openBotsToolAtom } from '@/atoms/bots-navigation'
 import { notificationsEnabledAtom, notificationSoundEnabledAtom, notificationSoundsAtom, playNotificationSoundForType } from '@/atoms/notifications'
 import { Button } from '@/components/ui/button'
 
@@ -24,6 +26,9 @@ function mergeReminders(current: ActivePlanningReminder[], incoming: ActivePlann
 export function PlanningReminderRail({ playSound = true }: { playSound?: boolean } = {}): React.ReactElement | null {
   const [reminders, setReminders] = useAtom(activePlanningRemindersAtom)
   const openWorkspaceComponent = useSetAtom(openWorkspaceComponentAtom)
+  const openBotsTool = useSetAtom(openBotsToolAtom)
+  const appMode = useAtomValue(appModeAtom)
+  const currentAgentSessionId = useAtomValue(currentAgentSessionIdAtom)
   const setSelectedTodoId = useSetAtom(planningSelectedTodoIdAtom)
   const notificationsEnabled = useAtomValue(notificationsEnabledAtom)
   const soundEnabled = useAtomValue(notificationSoundEnabledAtom)
@@ -69,7 +74,9 @@ export function PlanningReminderRail({ playSound = true }: { playSound?: boolean
   }
   const openTodo = (reminder: ActivePlanningReminder): void => {
     setSelectedTodoId(reminder.targetId)
-    openWorkspaceComponent(reminder.targetType === 'todo' ? 'todos' : 'calendar')
+    const component = reminder.targetType === 'todo' ? 'todos' : 'calendar'
+    if (appMode === 'bots') openBotsTool(component)
+    else if (currentAgentSessionId) openWorkspaceComponent({ scopeId: currentAgentSessionId, component })
   }
   const snooze = async (id: string, minutes: number) => {
     try {
