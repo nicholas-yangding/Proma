@@ -124,6 +124,7 @@ import type {
   VaultDeleteInput,
   VaultTreeEntry,
   VaultFocus,
+  VaultFileReferenceInput,
   VaultReadResult,
   VaultRenameInput,
   VaultSavePastedImageInput,
@@ -501,6 +502,7 @@ export interface ElectronAPI extends BotsAPI {
   authorizeDiscoveredVault: (rootPath: string, options?: { inboxPath?: string; allowAgentWrites?: boolean }) => Promise<VaultSummary>
   listVaultFiles: () => Promise<VaultTreeEntry[]>
   readVaultFile: (relativePath: string, expectedVaultId?: string) => Promise<VaultReadResult>
+  resolveVaultFileReference: (input: VaultFileReferenceInput) => Promise<string | null>
   searchVaultNotes: (query: string) => Promise<VaultSearchResponse>
   onVaultSearchChanged: (callback: (status: VaultSearchStatus) => void) => () => void
   resolveVaultMedia: (noteRelativePath: string, src: string) => Promise<import('@proma/shared').ResolvedFileUrl | null>
@@ -1804,6 +1806,7 @@ const electronAPI: ElectronAPI = {
   authorizeDiscoveredVault: (rootPath: string, options?: { inboxPath?: string; allowAgentWrites?: boolean }) => ipcRenderer.invoke(VAULT_IPC_CHANNELS.AUTHORIZE_CANDIDATE, rootPath, options),
   listVaultFiles: () => ipcRenderer.invoke(VAULT_IPC_CHANNELS.LIST_FILES),
   readVaultFile: (relativePath: string, expectedVaultId?: string) => ipcRenderer.invoke(VAULT_IPC_CHANNELS.READ_FILE, relativePath, expectedVaultId),
+  resolveVaultFileReference: (input: VaultFileReferenceInput) => ipcRenderer.invoke(VAULT_IPC_CHANNELS.RESOLVE_FILE_REFERENCE, input),
   searchVaultNotes: (query: string) => ipcRenderer.invoke(VAULT_IPC_CHANNELS.SEARCH, query),
   onVaultSearchChanged: (callback: (status: VaultSearchStatus) => void) => {
     const listener = (_: unknown, status: VaultSearchStatus): void => callback(status)

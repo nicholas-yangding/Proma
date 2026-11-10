@@ -21,6 +21,7 @@ import type {
   VaultDeleteInput,
   VaultTreeEntry,
   VaultFocus,
+  VaultFileReferenceInput,
   VaultReadResult,
   VaultRenameInput,
   VaultSavePastedImageInput,
@@ -235,6 +236,7 @@ export function createVaultFileSystem(rootPath: string): VaultFileSystem {
     if (stats.size > VAULT_MAX_EDIT_BYTES) throw new Error('Vault 文件超过 2 MB 读取上限')
     const content = readFileSync(target.absolutePath, 'utf-8')
     return {
+      vaultId: getVaultId(root),
       relativePath: target.relativePath,
       content,
       sha256: sha256(content),
@@ -524,6 +526,17 @@ export function getConfiguredVaultFileSystem(expectedVaultId?: string): VaultFil
     throw new Error('Vault 已切换，请重新搜索')
   }
   return createVaultFileSystem(config.rootPath)
+}
+
+export function resolveVaultFileReference(input: VaultFileReferenceInput): string | null {
+  const config = getVaultConfig()
+  if (!config || getVaultId(config.rootPath) !== input.vaultId) return null
+  try {
+    const target = getSafeVaultTarget(config.rootPath, input.relativePath)
+    return lstatSync(target.absolutePath).isFile() ? target.absolutePath : null
+  } catch {
+    return null
+  }
 }
 
 /** 在已配置 Vault 的 Inbox 中原子创建一个不覆盖既有笔记的未命名 Markdown 文件。 */

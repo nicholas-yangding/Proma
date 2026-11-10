@@ -176,6 +176,7 @@ import {
   selectDefaultVault,
   getConfiguredVaultFileSystem,
   getVaultSummary,
+  resolveVaultFileReference,
   setVaultUserContext,
   clearVaultUserContext,
 } from './lib/vault-service'
@@ -6198,6 +6199,15 @@ export function registerIpcHandlers(): void {
     if (typeof relativePath !== 'string') throw new Error('Vault relativePath 必填')
     if (expectedVaultId !== undefined && typeof expectedVaultId !== 'string') throw new Error('Vault 标识非法')
     return getConfiguredVaultFileSystem(expectedVaultId).readFile(relativePath)
+  })
+
+  ipcMain.handle(VAULT_IPC_CHANNELS.RESOLVE_FILE_REFERENCE, async (_, input: unknown): Promise<string | null> => {
+    if (!input || typeof input !== 'object'
+      || !('vaultId' in input) || typeof input.vaultId !== 'string'
+      || !('relativePath' in input) || typeof input.relativePath !== 'string') {
+      throw new Error('Vault 文件引用参数非法')
+    }
+    return resolveVaultFileReference({ vaultId: input.vaultId, relativePath: input.relativePath })
   })
 
   ipcMain.handle(VAULT_IPC_CHANNELS.RESOLVE_MEDIA, async (_, noteRelativePath: unknown, src: unknown): Promise<ResolvedFileUrl | null> => {

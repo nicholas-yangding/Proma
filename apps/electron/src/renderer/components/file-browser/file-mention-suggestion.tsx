@@ -16,7 +16,8 @@ import { CURRENT_AGENT_DELEGATION_ALIAS } from '@/types/settings'
 import { createDebouncedSuggestionLoader, createLatestSuggestionRequestGuard, createMentionPopup, positionPopup, isSuggestionTriggerPresent, shouldSuppressEscTrigger, shouldClearEscSuppressionOnExit, type EscSuppressedTrigger } from '@/components/agent/mention-popup-utils'
 import { shouldAllowMentionTrigger, shouldShowMentionSuggestion } from '@/components/ai-elements/mention-utils'
 import { resolveFileMentionPath } from './file-mention-path'
-import { pinCurrentFileEntry } from './file-mention-pin'
+import { loadCurrentFileMention } from '@/lib/current-open-file'
+import type { CurrentOpenFile } from '@/lib/current-open-file'
 
 type AtMentionChoice =
   | { kind: 'file'; entry: FileIndexEntry; pinned?: true }
@@ -28,7 +29,7 @@ export function createFileMentionSuggestion(
   attachedDirsRef?: React.RefObject<string[]>,
   mentionItemCountRef?: React.MutableRefObject<number>,
   sessionAttachedDirsRef?: React.RefObject<string[]>,
-  currentFileRef?: React.RefObject<string | null>,
+  currentFileRef?: React.RefObject<CurrentOpenFile | null>,
   agentMentions?: { enabled: React.RefObject<boolean>; getChannels: () => Channel[] },
 ): Omit<SuggestionOptions<AtMentionChoice>, 'editor'> {
   let missingWorkspaceToastShown = false
@@ -79,14 +80,18 @@ export function createFileMentionSuggestion(
     try {
       const additionalPaths = attachedDirsRef?.current ?? []
       const sessionPaths = sessionAttachedDirsRef?.current ?? []
-      const result = await window.electronAPI.searchWorkspaceFiles(
-        wsPath,
+      const { entries, pinnedEntry } = await loadCurrentFileMention({
+        currentFileRef: currentFileRef ?? { current: null },
         query,
-        200,
-        additionalPaths.length > 0 ? additionalPaths : undefined,
-        sessionPaths.length > 0 ? sessionPaths : undefined,
-      )
-      const { entries, pinnedEntry } = pinCurrentFileEntry(result.entries, currentFileRef?.current, query)
+        searchFiles: async () => (await window.electronAPI.searchWorkspaceFiles(
+          wsPath,
+          query,
+          200,
+          additionalPaths.length > 0 ? additionalPaths : undefined,
+          sessionPaths.length > 0 ? sessionPaths : undefined,
+        )).entries,
+        resolveVaultFile: (input) => window.electronAPI.resolveVaultFileReference(input),
+      })
       const choices: AtMentionChoice[] = entries.map((entry) => ({ kind: 'file', entry }))
       if (pinnedEntry) choices.unshift({ kind: 'file', entry: pinnedEntry, pinned: true })
       return choices

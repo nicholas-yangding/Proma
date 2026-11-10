@@ -138,6 +138,7 @@ export class VaultDocumentController {
         this.snapshot = {
           ...this.snapshot,
           base: {
+            vaultId: this.snapshot.base.vaultId,
             relativePath: result.relativePath,
             content,
             sha256: result.sha256,

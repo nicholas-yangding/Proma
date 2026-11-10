@@ -1004,6 +1004,7 @@ export function VaultView({ embedded = false, sessionId }: { embedded?: boolean;
       // A write can finish after the user has opened another note. Never replace
       // that newer view with a stale save acknowledgement.
       setReadResult((previous) => previous?.relativePath === request.relativePath ? {
+        vaultId: previous.vaultId,
         relativePath: result.relativePath,
         content: request.content,
         sha256: result.sha256,

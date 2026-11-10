@@ -74,11 +74,14 @@ export interface VaultSavePastedImageInput {
 }
 
 export interface VaultReadResult {
+  vaultId: string
   relativePath: string
   content: string
   sha256: string
   modifiedAt: number
 }
+
+export type VaultFileReferenceInput = Pick<VaultReadResult, 'vaultId' | 'relativePath'>
 
 export interface VaultWriteInput {
   relativePath: string
@@ -128,6 +131,7 @@ export const VAULT_IPC_CHANNELS = {
   SEARCH: 'vault:search',
   SEARCH_CHANGED: 'vault:search-changed',
   READ_FILE: 'vault:read-file',
+  RESOLVE_FILE_REFERENCE: 'vault:resolve-file-reference',
   RESOLVE_MEDIA: 'vault:resolve-media',
   SAVE_PASTED_IMAGE: 'vault:save-pasted-image',
   WRITE_FILE: 'vault:write-file',
