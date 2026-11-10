@@ -622,6 +622,22 @@ class RawHtmlBlockWidget extends LiveMarkdownBlockWidget {
   }
 }
 
+/** 内联 HTML 保持原有列表结构，只替换标签范围并过滤不安全属性。 */
+class InlineHtmlWidget extends WidgetType {
+  constructor(private readonly html: string, private readonly from: number) { super() }
+  override eq(other: InlineHtmlWidget): boolean { return this.html === other.html && this.from === other.from }
+  override toDOM(): HTMLElement {
+    const element = document.createElement('span')
+    element.dataset.liveMarkdownInlineFrom = String(this.from)
+    element.innerHTML = DOMPurify.sanitize(this.html, {
+      ALLOWED_TAGS: ['span', 'strong', 'b', 'em', 'i', 's', 'del', 'u', 'mark', 'sub', 'sup'],
+      ALLOWED_ATTR: [],
+    })
+    return element
+  }
+  override ignoreEvent(): boolean { return false }
+}
+
 class InlineImageWidget extends WidgetType {
   private destroyed = false
 
@@ -798,7 +814,9 @@ function buildDecorations(
       if (protectedRanges.some((range) => from >= range.from && to <= range.to)) continue
       const widget = preview.kind === 'math'
         ? new InlineMathWidget(preview.content, from)
-        : preview.kind === 'image'
+        : preview.kind === 'html'
+          ? new InlineHtmlWidget(preview.content, from)
+          : preview.kind === 'image'
           ? new InlineImageWidget(preview.src, preview.alt, preview.title, from, resolveImageSrc)
           : new AngleAutolinkWidget(preview.content)
       entries.push({ from, to, decoration: Decoration.replace({ widget }) })

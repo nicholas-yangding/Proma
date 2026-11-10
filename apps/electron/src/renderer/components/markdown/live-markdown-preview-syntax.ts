@@ -1,7 +1,7 @@
 import { isMarkdownEscaped as isEscaped, readDollarMath } from '@/lib/markdown-math-syntax'
 
 export type InlineLiveMarkdownPreview =
-  | { kind: 'math' | 'autolink'; from: number; to: number; content: string }
+  | { kind: 'math' | 'autolink' | 'html'; from: number; to: number; content: string }
   | { kind: 'image'; from: number; to: number; src: string; alt: string; title: string }
 
 /** Returns the closing delimiter for supported display math, if this line opens a block. */
@@ -70,6 +70,38 @@ function overlapsInlineCode(ranges: Array<{ from: number; to: number }>, from: n
   return ranges.some((range) => from < range.to && to > range.from)
 }
 
+/** 只预览完整配对的内联格式标签，未闭合或跨行标签保留源码。 */
+function findInlineHtmlPreviews(line: string, codeRanges: Array<{ from: number; to: number }>): InlineLiveMarkdownPreview[] {
+  const previews: InlineLiveMarkdownPreview[] = []
+  const tags = /<\/?(?:span|strong|b|em|i|s|del|u|mark|sub|sup)(?=\s|\/?>)(?:[^>"']|"[^"]*"|'[^']*')*>/gi
+  const stack: string[] = []
+  let start = -1
+  for (const match of line.matchAll(tags)) {
+    const from = match.index
+    const to = from + match[0].length
+    if (isEscaped(line, from) || overlapsInlineCode(codeRanges, from, to)) continue
+    const name = /^<\/?([\w-]+)/.exec(match[0])?.[1]?.toLowerCase()
+    if (!name) continue
+    if (/^<\//.test(match[0])) {
+      if (stack.at(-1) !== name) { stack.length = 0; start = -1; continue }
+      stack.pop()
+      if (stack.length === 0 && start >= 0) {
+        const content = line.slice(start, to)
+        const allTags = content.matchAll(/<\/?([a-z][\w:-]*)(?=\s|\/?>)/gi)
+        const supportedTags = new Set(['span', 'strong', 'b', 'em', 'i', 's', 'del', 'u', 'mark', 'sub', 'sup'])
+        if (!overlapsInlineCode(codeRanges, start, to) && [...allTags].every((tag) => supportedTags.has(tag[1]!.toLowerCase()))) {
+          previews.push({ kind: 'html', from: start, to, content })
+        }
+        start = -1
+      }
+    } else if (!/\/\s*>$/.test(match[0])) {
+      if (stack.length === 0) start = from
+      stack.push(name)
+    }
+  }
+  return previews
+}
+
 /**
  * Finds the inline syntaxes that ink-mde leaves literal in reading mode.
  * Ranges include the delimiters so CodeMirror can replace the complete source span.
@@ -77,6 +109,7 @@ function overlapsInlineCode(ranges: Array<{ from: number; to: number }>, from: n
 export function findInlineLiveMarkdownPreviews(line: string): InlineLiveMarkdownPreview[] {
   const previews: InlineLiveMarkdownPreview[] = []
   const codeRanges = inlineCodeRanges(line)
+  previews.push(...findInlineHtmlPreviews(line, codeRanges))
   for (let from = line.indexOf('$'); from !== -1; from = line.indexOf('$', from + 1)) {
     if (overlapsInlineCode(codeRanges, from, from + 1)) continue
     const math = readDollarMath(line, from)

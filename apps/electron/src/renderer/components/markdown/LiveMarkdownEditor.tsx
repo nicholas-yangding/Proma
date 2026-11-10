@@ -1,7 +1,7 @@
 import * as React from 'react'
 import { syntaxTree } from '@codemirror/language'
 import { Prec, RangeSetBuilder, StateEffect, StateField, type EditorState, type Extension } from '@codemirror/state'
-import { Decoration, EditorView, ViewPlugin, keymap, type DecorationSet } from '@codemirror/view'
+import { Decoration, EditorView, ViewPlugin, WidgetType, keymap, type DecorationSet } from '@codemirror/view'
 import ink, { type Instance } from 'ink-mde'
 import { cn } from '@/lib/utils'
 import {
@@ -148,6 +148,15 @@ const markdownSyntaxMarkerNames = new Set([
   // ink-mde 使用 GFM parser；隐藏 ~~ 定界符，让删除线呈现与 Obsidian Live Preview 一致。
   'StrikethroughMark',
 ])
+class PlusListBulletWidget extends WidgetType {
+  override toDOM(): HTMLElement {
+    const bullet = document.createElement('span')
+    bullet.textContent = '•'
+    bullet.setAttribute('aria-hidden', 'true')
+    return bullet
+  }
+}
+const plusListBullet = Decoration.replace({ widget: new PlusListBulletWidget() })
 const hiddenMarkdownSyntax = Decoration.replace({ class: 'live-markdown-syntax-hidden' })
 const pendingListHeading = Decoration.mark({ class: 'live-markdown-pending-list-heading' })
 
@@ -236,6 +245,13 @@ function markdownSyntaxDecorations(state: EditorState, focused: boolean): Decora
           const headingLine = state.doc.lineAt(from)
           builder.add(headingLine.from, headingLine.to, pendingListHeading)
         }
+      }
+      if (type.name === 'ListMark' && state.sliceDoc(from, to) === '+') {
+        const taskMarker = state.sliceDoc(to + 1, to + 4).toLowerCase()
+        if (!activeLines.has(state.doc.lineAt(from).number) && taskMarker !== '[ ]' && taskMarker !== '[x]') {
+          builder.add(from, to, plusListBullet)
+        }
+        return
       }
       if (!markdownSyntaxMarkerNames.has(type.name)) return
       if (activeLines.has(state.doc.lineAt(from).number)) return
