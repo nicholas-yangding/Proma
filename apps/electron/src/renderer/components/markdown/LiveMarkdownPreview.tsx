@@ -1,3 +1,4 @@
+import { canLoadLiveMarkdownImageDirectly } from './live-markdown-image-source'
 import { createRoot, type Root } from 'react-dom/client'
 import DOMPurify from 'dompurify'
 import { RangeSetBuilder, StateEffect, StateField, type Extension, type EditorState } from '@codemirror/state'
@@ -585,17 +586,33 @@ class InlineMathWidget extends WidgetType {
 
 /** Raw HTML 在阅读态保持可用，但先经 DOMPurify 处理，避免 Markdown 文件执行脚本。 */
 class RawHtmlBlockWidget extends LiveMarkdownBlockWidget {
-  constructor(private readonly html: string, private readonly from: number) { super() }
+  constructor(private readonly html: string, private readonly from: number, private readonly resolveImageSrc?: ResolveLiveMarkdownImageSrc) { super() }
   override eq(other: RawHtmlBlockWidget): boolean { return this.from === other.from && this.html === other.html }
   override toDOM(view: EditorView): HTMLElement {
     const wrapper = document.createElement('div')
     wrapper.className = 'live-markdown-raw-html-block'
     wrapper.dataset.liveMarkdownBlockFrom = String(this.from)
-    wrapper.innerHTML = DOMPurify.sanitize(this.html, {
+    const fragment = DOMPurify.sanitize(this.html, {
       USE_PROFILES: { html: true },
       FORBID_TAGS: ['style'],
-      FORBID_ATTR: ['style'],
+      FORBID_ATTR: ['style', 'srcset'],
+      RETURN_DOM_FRAGMENT: true,
     })
+    for (const image of Array.from(fragment.querySelectorAll('img'))) {
+      const src = image.getAttribute('src') ?? ''
+      image.removeAttribute('src')
+      image.referrerPolicy = 'no-referrer'
+      image.addEventListener('load', () => view.requestMeasure())
+      image.addEventListener('error', () => view.requestMeasure())
+      if (canLoadLiveMarkdownImageDirectly(src)) {
+        image.src = src
+      } else if (src && this.resolveImageSrc) {
+        void this.resolveImageSrc(src).then((resolved) => {
+          if (resolved) image.src = resolved
+        }).catch(() => {})
+      }
+    }
+    wrapper.appendChild(fragment)
     for (const link of Array.from(wrapper.querySelectorAll('a'))) {
       link.target = '_blank'
       link.rel = 'noreferrer noopener'
@@ -673,6 +690,7 @@ function buildBlocks(
   showPropertiesSource = false,
   onOpenWikiLink?: (target: string) => void,
   findController?: LiveMarkdownFindController,
+  resolveImageSrc?: ResolveLiveMarkdownImageSrc,
 ): { blocks: PreviewBlock[]; frontmatterEnd: number } {
   const blocks: PreviewBlock[] = []
   const lines = state.doc.toJSON()
@@ -733,7 +751,7 @@ function buildBlocks(
       const from = state.doc.line(number).from
       const to = state.doc.line(rawHtmlEnd + 1).to
       const html = lines.slice(number - 1, rawHtmlEnd + 1).join('\n')
-      blocks.push({ kind: 'raw-html', from, to, decoration: Decoration.replace({ widget: new RawHtmlBlockWidget(html, from), block: true }) })
+      blocks.push({ kind: 'raw-html', from, to, decoration: Decoration.replace({ widget: new RawHtmlBlockWidget(html, from, resolveImageSrc), block: true }) })
       number = rawHtmlEnd + 1
       continue
     }
@@ -805,7 +823,7 @@ export function createLiveMarkdownBlockPreview(
   StateField.define<PreviewState>({
     create: (state) => {
       const lines = activeLines(state)
-      const { blocks, frontmatterEnd } = buildBlocks(state, enableProperties, false, onOpenWikiLink, findController)
+      const { blocks, frontmatterEnd } = buildBlocks(state, enableProperties, false, onOpenWikiLink, findController, resolveImageSrc)
       return {
         activeLines: lines,
         blocks,
@@ -821,7 +839,7 @@ export function createLiveMarkdownBlockPreview(
       const rebuild = transaction.docChanged || showPropertiesSource !== value.showPropertiesSource
       if (!rebuild && sameLines(lines, value.activeLines)) return value
       const { blocks, frontmatterEnd } = rebuild
-        ? buildBlocks(transaction.state, enableProperties, showPropertiesSource, onOpenWikiLink, findController)
+        ? buildBlocks(transaction.state, enableProperties, showPropertiesSource, onOpenWikiLink, findController, resolveImageSrc)
         : value
       return {
         activeLines: lines,
