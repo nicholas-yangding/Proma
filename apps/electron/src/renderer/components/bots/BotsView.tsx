@@ -1,6 +1,6 @@
 import * as React from 'react'
-import { useAtom, useAtomValue, useSetAtom, useStore } from 'jotai'
-import { Archive, Bot, Columns2, FolderOpen, Loader2, MoreHorizontal, Pencil, Plus, RotateCcw, Settings2, Users } from 'lucide-react'
+import { useAtom, useAtomValue, useSetAtom } from 'jotai'
+import { Archive, Bot, ChevronDown, Loader2, Pencil, Plus, RotateCcw, Settings2, Users } from 'lucide-react'
 import { getBotConversationMemberIds, getBotMembershipStart } from '@proma/shared'
 import type { BotFileReference } from '@proma/shared'
 import {
@@ -18,11 +18,13 @@ import {
   botsWorkspaceSessionIdAtom,
 } from '@/atoms/bot-atoms'
 import { openBotsConversationAtom } from '@/atoms/bots-navigation'
-import { agentPendingFilesAtomFamily, agentSidePanelOpenAtomFamily, agentWorkspacePositionAtom } from '@/atoms/agent-atoms'
+import { agentPendingFilesAtomFamily } from '@/atoms/agent-atoms'
+import { workspacePanelScopeIdAtom } from '@/atoms/workspace-session'
+import { WorkspaceHeaderControls } from '@/components/app-shell/WorkspaceHeaderControls'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { BotAvatar } from './BotAvatar'
 import { BotComposer } from './BotComposer'
 import { BotConversationMessages } from './BotConversationMessages'
@@ -34,7 +36,6 @@ import { INSERT_FILE_MENTION_EVENT } from '@/lib/file-panel-drag'
 import type { FilePanelDragItem } from '@/lib/file-panel-drag'
 
 export function BotsView(): React.ReactElement {
-  const store = useStore()
   const snapshot = useAtomValue(botsSnapshotAtom)
   const state = useAtomValue(botsActiveConversationAtom)
   const activeId = useAtomValue(botsActiveConversationIdAtom)
@@ -46,8 +47,8 @@ export function BotsView(): React.ReactElement {
   const [fileBotIds, setFileBotIds] = useAtom(botsFileBotIdMapAtom)
   const setFileSessionIds = useSetAtom(botsFileSessionIdMapAtom)
   const workspaceSessionId = useAtomValue(botsWorkspaceSessionIdAtom)
+  const workspaceScopeId = useAtomValue(workspacePanelScopeIdAtom)
   const [pendingFiles, setPendingFiles] = useAtom(agentPendingFilesAtomFamily(workspaceSessionId ?? ''))
-  const [workspacePosition, setWorkspacePosition] = useAtom(agentWorkspacePositionAtom)
   const apply = useSetAtom(botsApplyConversationAtom)
   const setDialog = useSetAtom(botsDialogAtom)
   const [sending, setSending] = React.useState(false)
@@ -136,15 +137,53 @@ export function BotsView(): React.ReactElement {
   })
   const disabled = Boolean(conversation?.archivedAt) || availableMembers.length === 0
   return <section className="flex h-full min-h-0 flex-col bg-content-area" data-testid="bots-view">
-    <header className="flex flex-wrap items-center gap-3 border-b border-border/50 px-5 pb-3 pt-5 titlebar-drag-region">
+    <header className="relative z-[51] flex h-[48px] shrink-0 items-center gap-2 border-b border-border/50 px-3">
+      <div className="absolute inset-0 titlebar-drag-region pointer-events-none" />
       <BotAvatar name={directBot?.name ?? state.conversation.title} avatar={directBot?.avatar} group={conversation?.kind === 'group'} />
-      <div className="min-w-0 flex-1"><h1 className="truncate text-base font-medium">{state.conversation.title}</h1><p className="truncate text-xs text-muted-foreground">{conversation?.kind === 'group' ? `${members.map((bot) => bot.name).join('、')} · ${conversation.responder.kind === 'mentions' ? '仅点名回应' : conversation.responder.kind === 'everyone' ? '全员回应' : '主持 Bot 回应'}` : directBot?.name ?? '已归档 Bot'}{conversation?.archivedAt ? ' · 聊天已归档' : ''}</p></div>
-      <div className="flex items-center gap-1 titlebar-no-drag"><Button variant="ghost" size="sm" disabled={!workspaceSessionId} onClick={() => { if (workspaceSessionId) store.set(agentSidePanelOpenAtomFamily(workspaceSessionId), true) }} data-testid="bot-open-files-button"><FolderOpen />文件</Button><Button variant="ghost" size="icon-sm" aria-label={conversation?.kind === 'group' ? '群聊设置' : 'Bot 设置'} onClick={() => setDialog(conversation?.kind === 'group' ? { kind: 'group', conversationId: conversation.id } : { kind: 'profile', botId: directBot?.id })}><Settings2 /></Button><DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon-sm" aria-label="更多聊天操作"><MoreHorizontal /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem onSelect={() => { setNewTitle(state.conversation.title); setRenameOpen(true) }}><Pencil className="mr-2 h-4 w-4" />重命名话题</DropdownMenuItem>{directBot && !directBot.archivedAt && <DropdownMenuItem onSelect={() => setDialog({ kind: 'topic', botId: directBot.id })}><Plus className="mr-2 h-4 w-4" />新建话题</DropdownMenuItem>}<DropdownMenuSeparator /><DropdownMenuItem disabled={busy} onSelect={() => { void updateConversation({ archived: !state.conversation.archivedAt }) }}>{state.conversation.archivedAt ? <RotateCcw className="mr-2 h-4 w-4" /> : <Archive className="mr-2 h-4 w-4" />}{state.conversation.archivedAt ? '恢复聊天' : '归档聊天'}</DropdownMenuItem></DropdownMenuContent></DropdownMenu></div>
+      <div className="min-w-0 flex-1">
+        <h1 className="min-w-0">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                className="titlebar-no-drag group flex max-w-full min-w-0 items-center gap-1.5 rounded-lg px-2 py-0.5 text-left transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                aria-label={`会话菜单：${state.conversation.title}`}
+              >
+                <span className="truncate text-[15px] font-normal text-foreground">{state.conversation.title}</span>
+                <ChevronDown className="size-3 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="z-[100] min-w-40 titlebar-no-drag">
+              <DropdownMenuItem onSelect={() => setDialog(conversation?.kind === 'group' ? { kind: 'group', conversationId: conversation.id } : { kind: 'profile', botId: directBot?.id })}>
+                <Settings2 className="size-3.5" />
+                {conversation?.kind === 'group' ? '群聊设置' : 'Bot 设置'}
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={() => { setNewTitle(state.conversation.title); setRenameOpen(true) }}>
+                <Pencil className="size-3.5" />
+                重命名话题
+              </DropdownMenuItem>
+              {directBot && !directBot.archivedAt && (
+                <DropdownMenuItem onSelect={() => setDialog({ kind: 'topic', botId: directBot.id })}>
+                  <Plus className="size-3.5" />
+                  新建话题
+                </DropdownMenuItem>
+              )}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem disabled={busy} onSelect={() => { void updateConversation({ archived: !state.conversation.archivedAt }) }}>
+                {state.conversation.archivedAt ? <RotateCcw className="size-3.5" /> : <Archive className="size-3.5" />}
+                {state.conversation.archivedAt ? '恢复聊天' : '归档聊天'}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </h1>
+        <p className="truncate px-2 text-xs text-muted-foreground">{conversation?.kind === 'group' ? `${members.map((bot) => bot.name).join('、')} · ${conversation.responder.kind === 'mentions' ? '仅点名回应' : conversation.responder.kind === 'everyone' ? '全员回应' : '主持 Bot 回应'}` : directBot?.name ?? '已归档 Bot'}{conversation?.archivedAt ? ' · 聊天已归档' : ''}</p>
+      </div>
+      {workspaceScopeId && <WorkspaceHeaderControls scopeId={workspaceScopeId} chatLabel="聊天" />}
     </header>
     <div className="flex flex-wrap items-center gap-2 border-b border-border/30 px-5 py-2.5">
       {directBot && <><label className="text-xs text-muted-foreground" htmlFor="bots-topic-select">话题</label><select id="bots-topic-select" className={`${botSelectClassName} max-w-[240px] flex-1`} value={activeId ?? ''} onChange={(event) => openConversation(event.target.value)}>{topics.map((item) => <option key={item.conversation.id} value={item.conversation.id}>{item.conversation.title}</option>)}{state.conversation.archivedAt && <option value={state.conversation.id}>{state.conversation.title} · 已归档</option>}</select><Button size="sm" variant="ghost" disabled={Boolean(directBot.archivedAt)} onClick={() => setDialog({ kind: 'topic', botId: directBot.id })}><Plus />新话题</Button></>}
       {conversation?.kind === 'group' && <><Users className="h-4 w-4 text-muted-foreground" /><label className="text-xs text-muted-foreground" htmlFor="bots-file-member-select">文件工作区</label><select id="bots-file-member-select" className={`${botSelectClassName} max-w-[220px]`} value={fileBotId} onChange={(event) => selectFileBot(event.target.value)}>{members.map((bot) => <option key={bot.id} value={bot.id}>{bot.name}</option>)}{fileBotIsFormer && <option value={fileBotId}>历史成员 · {snapshot.bots.find((bot) => bot.id === fileBotId)?.name ?? 'Bot'}</option>}</select></>}
-      <DropdownMenu><DropdownMenuTrigger asChild><Button size="icon-sm" variant="ghost" aria-label="工作区布局"><Columns2 /></Button></DropdownMenuTrigger><DropdownMenuContent><DropdownMenuRadioGroup value={workspacePosition} onValueChange={(value) => { if (value !== 'center' && value !== 'right') return; setWorkspacePosition(value); if (workspaceSessionId) store.set(agentSidePanelOpenAtomFamily(workspaceSessionId), true) }}><DropdownMenuRadioItem value="right">聊天居中，文件在右</DropdownMenuRadioItem><DropdownMenuRadioItem value="center">文件居中，聊天在右</DropdownMenuRadioItem></DropdownMenuRadioGroup></DropdownMenuContent></DropdownMenu>
       {busy && <span className="ml-auto inline-flex items-center gap-1.5 text-xs text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" />{state.runs.filter((run) => run.state.kind === 'running').length} 位成员正在工作</span>}
     </div>
     <BotConversationMessages state={state} onStop={stop} onSelectFileBot={selectFileBot} />
