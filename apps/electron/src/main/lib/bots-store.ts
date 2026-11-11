@@ -83,7 +83,7 @@ export class BotsStore {
     return structuredClone(next)
   }
 
-  private activeBot(id: string): BotDefinition {
+  getActiveBot(id: string): BotDefinition {
     const bot = this.getBot(id)
     if (bot.archivedAt !== undefined) throw new Error('Bot 已归档，无法开始新的工作')
     return bot
@@ -149,7 +149,7 @@ export class BotsStore {
   createConversation(input: CreateBotConversationInput): BotConversationState {
     const parsed = createBotConversationInputSchema.parse(input)
     const ids = parsed.kind === 'direct' ? [parsed.botId] : parsed.memberBotIds
-    for (const id of ids) this.activeBot(id)
+    for (const id of ids) this.getActiveBot(id)
     if (parsed.kind === 'group') this.assertResponder(parsed.responder, ids)
     const id = botIdSchema.parse(this.id())
     if (this.conversations.has(id)) throw new Error('聊天标识已存在')
@@ -170,7 +170,7 @@ export class BotsStore {
     const changesScope = parsed.memberBotIds !== undefined || parsed.responder !== undefined || parsed.instructions !== undefined || parsed.archived === true
     if (changesScope && isBusy(previous)) throw new Error('聊天正在工作，请先停止后修改成员或设置')
     if (previous.conversation.kind === 'direct' && (parsed.memberBotIds !== undefined || parsed.responder !== undefined || parsed.instructions !== undefined)) throw new Error('私聊不能修改群设置')
-    if (parsed.memberBotIds) for (const id of parsed.memberBotIds) this.activeBot(id)
+    if (parsed.memberBotIds) for (const id of parsed.memberBotIds) this.getActiveBot(id)
     return this.transact(parsed.conversationId, (state) => {
       if (parsed.title !== undefined) state.conversation.title = parsed.title
       if (parsed.archived === true) state.conversation.archivedAt = this.now()

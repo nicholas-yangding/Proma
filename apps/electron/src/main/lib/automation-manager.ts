@@ -14,6 +14,7 @@ import { getAutomationsPath } from './config-paths'
 import {
   AUTOMATION_MAX_HISTORY,
   AUTOMATION_DEFAULT_PERMISSION_MODE,
+  hasAutomationExecutionConfig,
   type Automation,
   type AutomationRun,
   type CreateAutomationInput,
@@ -304,11 +305,6 @@ export function getAutomation(id: string): Automation | undefined {
   return readIndex().automations.find((a) => a.id === id)
 }
 
-/** 任务是否具备运行所需的最小完整度（channelId + workspaceId） */
-function isAutomationRunnable(a: Pick<Automation, 'channelId' | 'workspaceId'>): boolean {
-  return !!a.channelId && !!a.workspaceId
-}
-
 /**
  * 规范化 maxRuns：只接受 ≥1 的有限整数，其余（0、负数、非法值、undefined）一律按「不限次」处理返回 undefined。
  * 让 0/负数等价于"取消上限"，避免出现"上限为 0 永远跑不了"的死配置。
@@ -441,9 +437,7 @@ export function getEffectiveAutomationScheduleFields(
 export function createAutomation(input: CreateAutomationInput): Automation {
   const index = readIndex()
   const now = Date.now()
-  // 草稿态（缺 channelId / workspaceId）强制不启用，避免空配置任务进入调度
-  const requestedActive = input.active ?? true
-  const active = requestedActive && isAutomationRunnable(input)
+  const active = (input.active ?? true) && hasAutomationExecutionConfig(input)
 
   const automation: Automation = {
     id: randomUUID(),
@@ -462,6 +456,7 @@ export function createAutomation(input: CreateAutomationInput): Automation {
     maxRuns: normalizeMaxRuns(input.maxRuns),
     channelId: input.channelId,
     modelId: input.modelId,
+    executor: input.executor,
     workspaceId: input.workspaceId,
     permissionMode: input.permissionMode ?? AUTOMATION_DEFAULT_PERMISSION_MODE,
     sessionMode: input.sessionMode,
@@ -484,14 +479,20 @@ export function createAutomation(input: CreateAutomationInput): Automation {
 /** 更新定时任务（部分字段） */
 export function updateAutomation(input: UpdateAutomationInput): Automation | undefined {
   const index = readIndex()
-  const target = index.automations.find((a) => a.id === input.id)
-  if (!target) return undefined
+  const position = index.automations.findIndex((a) => a.id === input.id)
+  const existing = index.automations[position]
+  if (!existing) return undefined
+  const target = { ...existing }
 
   const now = Date.now()
   if (input.name !== undefined) target.name = input.name
   if (input.prompt !== undefined) target.prompt = input.prompt
   if (input.channelId !== undefined) target.channelId = input.channelId
   if (input.modelId !== undefined) target.modelId = input.modelId
+  if (input.executor !== undefined) {
+    target.executor = input.executor ?? undefined
+    if (target.executor?.botId !== existing.executor?.botId) target.lastSessionId = undefined
+  }
   // workspaceId 允许设为空字符串表示「无工作区」；用 undefined 区分「不修改」
   if (input.workspaceId !== undefined) {
     const nextWorkspaceId = input.workspaceId || undefined
@@ -534,9 +535,8 @@ export function updateAutomation(input: UpdateAutomationInput): Automation | und
 
   // 启用状态变化
   if (input.active !== undefined && input.active !== target.active) {
-    // 启用要求 channelId + workspaceId 齐全，否则拒绝（兜底前端校验，避免空配置任务进入调度）
-    if (input.active && !isAutomationRunnable(target)) {
-      throw new Error('启用定时任务前必须配置模型与项目')
+    if (input.active && !hasAutomationExecutionConfig(target)) {
+      throw new Error('启用定时任务前必须配置执行者与项目')
     }
     target.active = input.active
     if (input.active) {
@@ -550,12 +550,12 @@ export function updateAutomation(input: UpdateAutomationInput): Automation | und
     }
   }
 
-  // 调度配置被改成不完整时自动暂停：防止用户清空工作区 / 渠道后任务仍处于 active 进入 tick
-  if (target.active && !isAutomationRunnable(target)) {
+  if (target.active && !hasAutomationExecutionConfig(target)) {
     target.active = false
   }
 
   target.updatedAt = now
+  index.automations[position] = target
   writeIndex(index)
   return target
 }

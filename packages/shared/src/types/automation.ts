@@ -74,6 +74,11 @@ export interface AutomationFeishuNotificationTarget {
 /** 定时任务通知目标（钉钉/微信后续扩展） */
 export type AutomationNotificationTarget = AutomationFeishuNotificationTarget
 
+export interface AutomationBotExecutor {
+  kind: 'bot'
+  botId: string
+}
+
 /** 定时任务定义 */
 export interface Automation extends AutomationActiveWindow {
   id: string
@@ -111,9 +116,11 @@ export interface Automation extends AutomationActiveWindow {
   channelId: string
   /** 模型 ID（可选，继承来源会话或渠道默认） */
   modelId?: string
+  /** 省略时使用任务的渠道和模型 */
+  executor?: AutomationBotExecutor
   /** 工作区 ID（可选，决定子会话 cwd） */
   workspaceId?: string
-  /** 权限模式（无人值守运行时的工具审批策略，默认 bypassPermissions） */
+  /** 模型执行的无人值守权限。Bot 执行沿用当前 Bot 的权限。 */
   permissionMode?: AutomationPermissionMode
   /** 会话模式：daily=同一自然日内复用子会话，跨日新建（默认）；reuse=始终复用同一个子会话 */
   sessionMode?: AutomationSessionMode
@@ -145,6 +152,10 @@ export interface Automation extends AutomationActiveWindow {
   runHistory: AutomationRun[]
 }
 
+export function hasAutomationExecutionConfig(input: Pick<Automation, 'workspaceId' | 'channelId' | 'executor'>): boolean {
+  return Boolean(input.workspaceId && (input.executor ? input.executor.botId : input.channelId))
+}
+
 /** 运行历史最大保留条数（防止 json 无限膨胀） */
 export const AUTOMATION_MAX_HISTORY = 20
 
@@ -166,6 +177,7 @@ export interface CreateAutomationInput extends AutomationActiveWindow {
   maxRuns?: number | null
   channelId: string
   modelId?: string
+  executor?: AutomationBotExecutor
   workspaceId?: string
   permissionMode?: AutomationPermissionMode
   sessionMode?: AutomationSessionMode
@@ -197,6 +209,8 @@ export interface UpdateAutomationInput {
   maxRuns?: number | null
   channelId?: string
   modelId?: string
+  /** null 切回模型，省略时保留当前执行者 */
+  executor?: AutomationBotExecutor | null
   /** 工作区（用户可在创建后调整子会话归属的工作区） */
   workspaceId?: string
   permissionMode?: AutomationPermissionMode

@@ -69,6 +69,24 @@ function fixture() {
 }
 
 describe('Bots 持久聊天执行', () => {
+  test('Given 任务引用 Bot 标识，When 编辑并归档该 Bot，Then 读取最新职责且拒绝运行已归档或缺失 Bot', () => {
+    const f = fixture()
+    const bot = f.bot('研究员')
+    f.service.saveBot({
+      id: bot.id,
+      name: '审稿人',
+      avatar: bot.avatar,
+      instructions: '按最新标准审稿。',
+      model: bot.model,
+      defaultWorkspaceId: bot.defaultWorkspaceId,
+      permissionMode: bot.permissionMode,
+    })
+    expect(f.service.getActiveBot(bot.id)).toMatchObject({ name: '审稿人', instructions: '按最新标准审稿。' })
+    f.service.archiveBot(bot.id)
+    expect(() => f.service.getActiveBot(bot.id)).toThrow()
+    expect(() => f.service.getActiveBot('missing')).toThrow()
+  })
+
   test('Given 用户明确引用文件，When 群成员执行和新成员加入，Then 引用落盘且只有可见引用授予附加目录', async () => {
     const f = fixture()
     const first = f.bot('研究员')

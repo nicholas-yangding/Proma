@@ -25,6 +25,8 @@ import {
   automationToDraft,
   createEmptyDraft,
 } from '@/atoms/automation-atoms'
+import { botsLoadingAtom, botsSnapshotAtom } from '@/atoms/bot-atoms'
+import { hasAutomationExecutionConfig } from '@proma/shared'
 import type { Automation } from '@proma/shared'
 
 /** 把调度配置格式化为可读文案 */
@@ -157,13 +159,18 @@ interface SectionProps {
 }
 
 function Section({ title, automations, onEdit, onRefresh, onDelete }: SectionProps): React.ReactElement {
-  /** 列表上的任务是否具备运行 / 启用所需的最小完整度 */
-  const isRunnable = (a: Automation): boolean => !!a.channelId && !!a.workspaceId
+  const { bots } = useAtomValue(botsSnapshotAtom)
+  const botsLoading = useAtomValue(botsLoadingAtom)
+  const botLabels = new Map(bots.map((bot) => [
+    bot.id,
+    `Bot · ${bot.name}${bot.archivedAt !== undefined ? '（已归档）' : ''}`,
+  ]))
+  const unavailableBotLabel = botsLoading ? 'Bot 加载中' : 'Bot 不可用'
 
   const handleRunNow = async (e: React.MouseEvent, a: Automation): Promise<void> => {
     e.stopPropagation()
-    if (!isRunnable(a)) {
-      toast.error('请先为该任务配置模型与项目')
+    if (!hasAutomationExecutionConfig(a)) {
+      toast.error('请先为该任务配置执行者与项目')
       onEdit(a)
       return
     }
@@ -180,9 +187,8 @@ function Section({ title, automations, onEdit, onRefresh, onDelete }: SectionPro
 
   const handleToggle = async (e: React.MouseEvent, a: Automation): Promise<void> => {
     e.stopPropagation()
-    // 启用前必须配齐模型与项目，否则打开编辑面板让用户补全
-    if (!a.active && !isRunnable(a)) {
-      toast.error('请先为该任务配置模型与项目')
+    if (!a.active && !hasAutomationExecutionConfig(a)) {
+      toast.error('请先为该任务配置执行者与项目')
       onEdit(a)
       return
     }
@@ -234,6 +240,7 @@ function Section({ title, automations, onEdit, onRefresh, onDelete }: SectionPro
               <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[12px] text-muted-foreground">
                 <span className="inline-flex items-center gap-1"><Clock className="size-3" />{formatSchedule(a)}</span>
                 <span className="tabular-nums">{formatNextRun(a)}</span>
+                {a.executor && <span className="truncate">{botLabels.get(a.executor.botId) ?? unavailableBotLabel}</span>}
               </div>
             </div>
             {/* 右侧槽位固定宽度，只在悬浮时显示行操作，避免改变列表布局。 */}

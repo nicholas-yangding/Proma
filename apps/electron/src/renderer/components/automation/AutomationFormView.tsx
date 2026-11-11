@@ -34,11 +34,13 @@ import {
   type AutomationDraft,
 } from '@/atoms/automation-atoms'
 import { agentWorkspacesAtom, agentSessionsAtom, currentAgentWorkspaceIdAtom } from '@/atoms/agent-atoms'
+import { botsLoadingAtom, botsSnapshotAtom } from '@/atoms/bot-atoms'
 import { activeSessionIdAtom } from '@/atoms/tab-atoms'
 import { activeViewAtom, agentSkillsTabAtom } from '@/atoms/active-view'
 import { useOpenSession } from '@/hooks/useOpenSession'
 import { LiveMarkdownEditor } from '@/components/markdown/LiveMarkdownEditor'
 import { LocalProjectBadge } from '@/components/agent/LocalProjectBadge'
+import { hasAutomationExecutionConfig } from '@proma/shared'
 import type {
   AutomationFeishuNotificationTarget,
   AutomationNotificationTarget,
@@ -49,6 +51,7 @@ import type {
 } from '@proma/shared'
 
 const NO_FEISHU_BINDING = '__none__'
+const MODEL_EXECUTOR = 'model'
 
 function formatTime(ts?: number): string {
   if (!ts) return '—'
@@ -92,13 +95,11 @@ function formatRunStatus(status: AutomationRun['status']): string {
 }
 
 function canPersistDraft(draft: AutomationDraft): boolean {
-  // 草稿保存门槛：只要有任务名和任务描述就保存为草稿（缺 channelId / workspaceId 会被强制不启用）
   return !!(draft.name.trim() && draft.prompt.trim())
 }
 
-/** 任务是否具备运行 / 启用所需的最小完整度（模型 + 项目） */
 function isReadyToRun(draft: AutomationDraft): boolean {
-  return canPersistDraft(draft) && !!draft.channelId && !!draft.workspaceId
+  return canPersistDraft(draft) && hasAutomationExecutionConfig(draft)
 }
 
 /** 列出当前还缺哪些必填项（用于"运行一次" Tooltip 与关闭时的 toast 提示） */
@@ -106,7 +107,7 @@ function listMissingFields(draft: AutomationDraft): string[] {
   const missing: string[] = []
   if (!draft.name.trim()) missing.push('任务名称')
   if (!draft.prompt.trim()) missing.push('任务描述')
-  if (!draft.channelId) missing.push('模型')
+  if (!draft.executor && !draft.channelId) missing.push('执行者')
   if (!draft.workspaceId) missing.push('项目')
   return missing
 }
@@ -128,6 +129,7 @@ function getDraftSignature(draft: AutomationDraft): string {
     maxRuns: draft.maxRuns ?? '',
     channelId: draft.channelId,
     modelId: draft.modelId ?? '',
+    executor: draft.executor ?? null,
     workspaceId: draft.workspaceId ?? '',
     permissionMode: draft.permissionMode,
     sessionMode: draft.sessionMode,
@@ -152,6 +154,7 @@ function draftToCreateInput(draft: AutomationDraft): CreateAutomationInput {
     maxRuns: draft.maxRuns ?? null,
     channelId: draft.channelId,
     modelId: draft.modelId,
+    executor: draft.executor,
     workspaceId: draft.workspaceId,
     permissionMode: draft.permissionMode,
     sessionMode: draft.sessionMode,
@@ -178,6 +181,7 @@ function draftToUpdateInput(draft: AutomationDraft): UpdateAutomationInput {
     maxRuns: draft.maxRuns ?? null,
     channelId: draft.channelId,
     modelId: draft.modelId,
+    executor: draft.executor ?? null,
     workspaceId: draft.workspaceId ?? '',
     permissionMode: draft.permissionMode,
     sessionMode: draft.sessionMode,
@@ -286,6 +290,8 @@ export function AutomationFormView({ embedded = false }: { embedded?: boolean } 
   const [formState, setFormState] = useAtom(automationFormAtom)
   const setAutomations = useSetAtom(automationsAtom)
   const workspaces = useAtomValue(agentWorkspacesAtom)
+  const { bots } = useAtomValue(botsSnapshotAtom)
+  const botsLoading = useAtomValue(botsLoadingAtom)
   const automations = useAtomValue(automationsAtom)
   const [agentSessions, setAgentSessions] = useAtom(agentSessionsAtom)
   const activeSessionId = useAtomValue(activeSessionIdAtom)
@@ -370,7 +376,6 @@ export function AutomationFormView({ embedded = false }: { embedded?: boolean } 
         ? { ...latestDraft, id: latestDraft.id ?? previousId ?? draft.id }
         : { ...draft, id: draft.id ?? previousId ?? undefined }
 
-      // 不完整任务（缺模型 / 工作区）强制不启用：避免无配置任务出现在「启用中」分组
       const draftToSave: AutomationDraft = isReadyToRun(baseDraft)
         ? baseDraft
         : { ...baseDraft, active: false }
@@ -508,7 +513,7 @@ export function AutomationFormView({ embedded = false }: { embedded?: boolean } 
   const handleRunNow = async (): Promise<void> => {
     const latest = latestFormRef.current
     if (!latest || !isReadyToRun(latest)) {
-      const missing = latest ? listMissingFields(latest) : ['任务名称', '任务描述', '模型', '项目']
+      const missing = latest ? listMissingFields(latest) : ['任务名称', '任务描述', '执行者', '项目']
       toast.error(`请先补全：${missing.join('、')}`)
       return
     }
@@ -588,6 +593,10 @@ export function AutomationFormView({ embedded = false }: { embedded?: boolean } 
   const selectedModel = form.channelId && form.modelId
     ? { channelId: form.channelId, modelId: form.modelId }
     : null
+  const activeBots = bots.filter((bot) => bot.archivedAt === undefined)
+  const selectedBotId = form.executor?.botId
+  const selectedBot = activeBots.find((bot) => bot.id === selectedBotId)
+  const archivedBot = bots.find((bot) => bot.id === selectedBotId && bot.archivedAt !== undefined)
   const feishuTarget = getFeishuTarget(form.notificationTargets)
   const selectedFeishuBinding = feishuTarget
     ? feishuBindings.find((binding) => binding.botId === feishuTarget.botId && binding.chatId === feishuTarget.chatId)
@@ -1043,14 +1052,57 @@ export function AutomationFormView({ embedded = false }: { embedded?: boolean } 
             </div>
           )}
 
-          {/* Pi supports any enabled model channel. */}
           <div className="flex flex-col gap-2">
-            <Label>选择模型</Label>
-            <ModelSelector
-              externalSelectedModel={selectedModel}
-              showChannelInTrigger
-              onModelSelect={(opt) => update({ channelId: opt.channelId, modelId: opt.modelId })}
-            />
+            <Label htmlFor="auto-executor">执行者</Label>
+            <Select
+              value={selectedBotId ? `bot:${selectedBotId}` : MODEL_EXECUTOR}
+              onValueChange={(value) => {
+                if (value === MODEL_EXECUTOR) {
+                  update({ executor: undefined })
+                  return
+                }
+                const bot = activeBots.find((candidate) => value === `bot:${candidate.id}`)
+                if (bot) {
+                  update({
+                    executor: { kind: 'bot', botId: bot.id },
+                    workspaceId: form.workspaceId || bot.defaultWorkspaceId,
+                  })
+                }
+              }}
+            >
+              <SelectTrigger id="auto-executor" className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={MODEL_EXECUTOR}>指定模型</SelectItem>
+                {activeBots.map((bot) => (
+                  <SelectItem key={bot.id} value={`bot:${bot.id}`}>Bot · {bot.name}</SelectItem>
+                ))}
+                {selectedBotId && !selectedBot && (
+                  <SelectItem value={`bot:${selectedBotId}`} disabled>
+                    {botsLoading ? '正在加载 Bot…' : archivedBot ? `${archivedBot.name}（已归档）` : 'Bot 不可用'}
+                  </SelectItem>
+                )}
+              </SelectContent>
+            </Select>
+            {selectedBotId ? (
+              selectedBot ? (
+                <p className="text-xs text-muted-foreground">
+                  运行时使用此 Bot 的职责、模型和{selectedBot.permissionMode === 'plan' ? '计划模式' : '直接执行模式'}。
+                </p>
+              ) : !botsLoading && (
+                <p className="text-xs text-destructive">请重新选择执行者。</p>
+              )
+            ) : (
+              <ModelSelector
+                externalSelectedModel={selectedModel}
+                showChannelInTrigger
+                onModelSelect={(opt) => update({ channelId: opt.channelId, modelId: opt.modelId })}
+              />
+            )}
+            {!botsLoading && !selectedBotId && activeBots.length === 0 && (
+              <p className="text-xs text-muted-foreground">在 Bots 中创建角色后，可在这里选择。</p>
+            )}
           </div>
 
           {/* 项目（必选，默认填入当前会话所在项目） */}
@@ -1174,10 +1226,12 @@ export function AutomationFormView({ embedded = false }: { embedded?: boolean } 
           {/* 会话模式选择已隐藏：默认采用 daily（同日复用、跨日新建）。
               schema/scheduler/Agent 工具层仍保留 reuse 模式，方便老配置和高级用户继续使用。 */}
 
-          <div className="flex gap-2 rounded-lg bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-400">
-            <AlertTriangle className="size-4 shrink-0 mt-0.5" />
-            <span>此任务将以「完全权限」无人值守运行，可自主读写文件、执行命令。请确认任务内容安全可信。</span>
-          </div>
+          {(!selectedBotId || selectedBot?.permissionMode === 'bypassPermissions') && (
+            <div className="flex gap-2 rounded-lg bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-400">
+              <AlertTriangle className="size-4 shrink-0 mt-0.5" />
+              <span>此任务将以「完全权限」无人值守运行，可自主读写文件、执行命令。请确认任务内容安全可信。</span>
+            </div>
+          )}
 
           {/* 运行历史（编辑模式） */}
           {isEdit && live && (

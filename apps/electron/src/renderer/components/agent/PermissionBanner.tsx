@@ -13,6 +13,7 @@ import { useAtom, useSetAtom } from 'jotai'
 import { Shield, ShieldAlert, Check, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { allPendingPermissionRequestsAtom, agentStreamingStatesAtom } from '@/atoms/agent-atoms'
+import { CREATE_BOT_TOOL_NAME } from '@proma/shared'
 import type { DangerLevel } from '@proma/shared'
 
 /** 危险等级对应的图标颜色 */
@@ -44,10 +45,11 @@ export function PermissionBanner({ sessionId }: PermissionBannerProps): React.Re
   const respondRef = React.useRef<(behavior: 'allow' | 'deny', alwaysAllow?: boolean) => void>()
 
   const request = requests[0] ?? null
+  const canQuickApprove = request?.toolName !== CREATE_BOT_TOOL_NAME
 
   // Enter 键快捷允许
   React.useEffect(() => {
-    if (!request) return
+    if (!request || !canQuickApprove) return
     const handleKeyDown = (e: KeyboardEvent): void => {
       if (
         e.target instanceof HTMLInputElement ||
@@ -61,7 +63,7 @@ export function PermissionBanner({ sessionId }: PermissionBannerProps): React.Re
     }
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [request?.requestId])
+  }, [request?.requestId, canQuickApprove])
 
   /** 关闭权限请求 & 终止 Agent */
   const handleDismiss = (): void => {
@@ -179,7 +181,7 @@ export function PermissionBanner({ sessionId }: PermissionBannerProps): React.Re
       {/* 操作按钮 */}
       <div className="flex items-center justify-end gap-1.5 px-3 pb-2.5">
         <span className="text-[10px] text-muted-foreground/40 mr-auto">
-          Enter 允许
+          {canQuickApprove && 'Enter 允许'}
         </span>
         <Button
           variant="ghost"

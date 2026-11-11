@@ -57,6 +57,7 @@ export interface CollaborationToolContext {
   permissionMode?: PromaPermissionMode
   getPermissionMode?: () => PromaPermissionMode | undefined
   triggeredBy?: 'user' | 'automation' | 'delegation' | 'external'
+  scheduledBot?: boolean
 }
 
 interface CollaborationToolResult extends Record<string, unknown> {
@@ -911,6 +912,7 @@ function startDelegation(
         record.title = updatedTitle
       },
     },
+    ctx.scheduledBot ? { scheduledBot: true } : undefined,
   ).catch((error: unknown) => {
     markDelegationFinished(record, 'failed', {
       error: error instanceof Error ? error.message : '未知错误',
@@ -1402,6 +1404,7 @@ export function buildPiCollaborationTools(
             },
             onTitleUpdated: () => {},
           },
+          ctx.scheduledBot ? { scheduledBot: true } : undefined,
         ).catch((error: unknown) => {
           markDelegationFinished(record, 'failed', {
             error: error instanceof Error ? error.message : '未知错误',

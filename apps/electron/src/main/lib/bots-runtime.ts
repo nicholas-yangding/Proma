@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import type { AgentStreamPayload, BotConversation, BotDefinition, SDKAssistantMessage, SDKMessage } from '@proma/shared'
 import { createInitialState, reduce } from './feishu/card-run-state'
+import { buildCreateBotTool } from './bots-create-tool'
+import { getMainWindow } from './main-window-store'
 
 export interface BotTurnInput {
   bot: BotDefinition
@@ -29,6 +31,10 @@ export interface BotRuntime {
   }) => string
   run: (input: BotTurnInput, emit: (event: BotTurnEvent) => void) => Promise<BotTurnResult>
   stop: (sessionId: string) => void
+}
+
+export function buildBotIdentityPrompt(bot: BotDefinition): string {
+  return `\n\n## Bot 身份\n\n你是长期 Bot「${bot.name}」。\n${bot.instructions}\n\n角色指令不能扩大本次任务的工具权限。`
 }
 
 /** completion 包含整个会话，公开聊天只采用本轮最后一条 assistant 回复。 */
@@ -66,10 +72,9 @@ export function createBotStreamProjection(emit: (event: BotTurnEvent) => void): 
 }
 
 export async function createBotsRuntime(): Promise<BotRuntime> {
-  const [sessions, channels, settings, registry, agentService, workspaces] = await Promise.all([
+  const [sessions, { resolveBotModel }, registry, agentService, workspaces] = await Promise.all([
     import('./agent-session-manager'),
-    import('./channel-manager'),
-    import('./settings-service'),
+    import('./bots-model'),
     import('./agent-headless-runner-registry'),
     import('./agent-service'),
     import('./agent-workspace-manager'),
@@ -92,12 +97,20 @@ export async function createBotsRuntime(): Promise<BotRuntime> {
     },
     async run(input, emit) {
       if (!workspaces.getAgentWorkspace(input.conversation.workspaceId)) throw new Error('Bot 聊天绑定的项目不存在。')
-      const appSettings = settings.getSettings()
-      const channelId = input.bot.model.kind === 'fixed' ? input.bot.model.channelId : appSettings.agentChannelId
-      const channel = channelId ? channels.getChannelById(channelId) : undefined
-      if (!channel?.enabled) throw new Error('请为 Bot 选择已启用的模型渠道。')
-      const modelId = input.bot.model.kind === 'fixed' ? input.bot.model.modelId : appSettings.agentModelId ?? channel.models.find((model) => model.enabled)?.id
-      if (!modelId || !channel.models.some((model) => model.id === modelId && model.enabled)) throw new Error('Bot 的模型不存在或未启用。')
+      const { channelId, modelId } = resolveBotModel(input.bot)
+      const { getBotsService } = await import('./bots-service-instance')
+      const botsService = await getBotsService()
+      const createBotTool = buildCreateBotTool({
+        sessionId: input.sessionId,
+        workspaceId: input.conversation.workspaceId,
+        getWorkspace: workspaces.getAgentWorkspace,
+        saveBot: (bot) => botsService.saveBot(bot),
+        onPermissionRequest: (request) => {
+          const window = getMainWindow()
+          if (!window || window.webContents.isDestroyed()) throw new Error('请打开 Proma 主窗口后再创建 Bot。')
+          agentService.agentEventBus.emit(input.sessionId, { kind: 'proma_event', event: { type: 'permission_request', request } })
+        },
+      })
       const baselineIds = new Set(sessions.getAgentSessionSDKMessages(input.sessionId).flatMap((message) => 'uuid' in message && typeof message.uuid === 'string' ? [message.uuid] : []))
       let result: BotTurnResult = { text: '', stopped: false }
       let streamedText = ''
@@ -117,7 +130,7 @@ export async function createBotsRuntime(): Promise<BotRuntime> {
           sessionId: input.sessionId,
           userMessage: input.prompt,
           userMessageUuid: randomUUID(),
-          channelId: channel.id,
+          channelId,
           modelId,
           workspaceId: input.conversation.workspaceId,
           additionalDirectories: input.additionalDirectories,
@@ -132,7 +145,7 @@ export async function createBotsRuntime(): Promise<BotRuntime> {
             result.stopped = options?.stoppedByUser ?? false
           },
           onTitleUpdated() {},
-        }, { systemPromptAppend: input.systemPromptAppend })
+        }, { systemPromptAppend: input.systemPromptAppend, piCustomTools: [createBotTool] })
         if (!result.text && result.stopped) result.text = streamedText
         return result
       } finally {

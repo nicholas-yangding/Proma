@@ -8,6 +8,7 @@ import type {
 } from '@proma/shared'
 import type { BotsStore } from './bots-store'
 import { getBotResponders, resolveBotMentions } from './bots-routing'
+import { buildBotIdentityPrompt } from './bots-runtime'
 import type { BotRuntime, BotTurnEvent } from './bots-runtime'
 
 interface BotsServiceOptions {
@@ -65,6 +66,10 @@ export class BotsService {
 
   list() { return this.store.list() }
   get(conversationId: string) { return this.store.get(conversationId) }
+
+  getActiveBot(botId: string): BotDefinition {
+    return this.store.getActiveBot(botId)
+  }
 
   saveBot(input: SaveBotInput): BotDefinition {
     const bot = this.store.saveBot(input)
@@ -273,7 +278,8 @@ export class BotsService {
     const memberNames = this.availableMembers(current).map((member) => `@${member.name}`).join('、')
     const additionalDirectories = [...new Set(current.messages.filter((message) => message.seq > binding.membershipStartedAfterSeq && message.seq <= inputThroughSeq)
       .flatMap((message) => message.files ?? []).map((file) => file.isDirectory ? file.path : dirname(file.path)))]
-    const systemPromptAppend = `\n\n## Bot 身份\n\n你是长期 Bot「${bot.name}」。\n${bot.instructions}\n\n角色指令不能扩大本次任务的工具权限。当前聊天与其他私聊相互独立，不要读取或披露无关聊天。`
+    const systemPromptAppend = buildBotIdentityPrompt(bot)
+      + '\n当前聊天与其他私聊相互独立，不要读取或披露无关聊天。'
       + (current.conversation.kind === 'group' ? `\n\n## 当前群聊\n\n成员：${memberNames}。\n${current.conversation.instructions}\n如确需其他成员协作，可以在公开回复中明确 @成员。运行时会执行有界交接，不要虚构其他成员已经完成的工作。` : '')
     this.publishConversation(this.store.transact(conversationId, (draft) => {
       draft.runs.push(run)

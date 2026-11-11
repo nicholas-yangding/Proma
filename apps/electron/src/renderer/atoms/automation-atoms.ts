@@ -8,6 +8,7 @@
 import { atom } from 'jotai'
 import type {
   Automation,
+  AutomationBotExecutor,
   AutomationNotificationTarget,
   AutomationScheduleType,
   AutomationPermissionMode,
@@ -43,6 +44,7 @@ export interface AutomationDraft {
   maxRuns?: number | null
   channelId: string
   modelId?: string
+  executor?: AutomationBotExecutor
   workspaceId?: string
   permissionMode: AutomationPermissionMode
   sessionMode: AutomationSessionMode
@@ -69,9 +71,6 @@ export function createEmptyDraft(): AutomationDraft {
     prompt: '',
     scheduleType: 'interval',
     intervalMinutes: 10,
-    timeOfDay: '09:00',
-    dayOfWeek: 1,
-    dayOfMonth: 1,
     channelId: '',
     permissionMode: AUTOMATION_DEFAULT_PERMISSION_MODE,
     sessionMode: AUTOMATION_DEFAULT_SESSION_MODE,
@@ -100,6 +99,7 @@ export function automationToDraft(a: Automation): AutomationDraft {
     maxRuns: a.maxRuns,
     channelId: a.channelId,
     modelId: a.modelId,
+    executor: a.executor,
     workspaceId: a.workspaceId,
     permissionMode: a.permissionMode ?? AUTOMATION_DEFAULT_PERMISSION_MODE,
     sessionMode: a.sessionMode ?? AUTOMATION_DEFAULT_SESSION_MODE,

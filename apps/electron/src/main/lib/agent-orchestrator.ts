@@ -1117,6 +1117,8 @@ export class AgentOrchestrator {
 
       // 10. 构建工作区 MCP 配置与 Pi 基础运行时工具
       const initialPermissionMode = permissionModeOverride ?? PROMA_DEFAULT_PERMISSION_MODE
+      const scheduledBot = extensions.scheduledBot === true
+        && (input.triggeredBy === 'automation' || input.triggeredBy === 'delegation')
       const collaborationPermissionMode = permissionModeOverride ?? sessionMeta?.permissionMode ?? initialPermissionMode
       const getPermissionMode = () => this.sessionPermissionModes.get(sessionId) ?? collaborationPermissionMode
       const piReasoningCapability = await resolvePiReasoningCapability(channel.provider, selectedModelId)
@@ -1129,6 +1131,7 @@ export class AgentOrchestrator {
         permissionMode: collaborationPermissionMode,
         getPermissionMode,
         triggeredBy: input.triggeredBy,
+        scheduledBot,
         thinkingLevel: piThinkingLevel,
         agentDelegationProfiles: (sessionMeta?.delegationDepth ?? 0) === 0 ? agentDelegationProfiles : undefined,
         getAgentDelegationProfiles: agentDelegationProfiles && (sessionMeta?.delegationDepth ?? 0) === 0
@@ -1350,6 +1353,11 @@ export class AgentOrchestrator {
         }
         const currentMode = getPermissionMode()
 
+        if (scheduledBot && (toolName === 'AskUserQuestion' || toolName === 'BrowserUpload'
+          || (toolName === 'ExitPlanMode' && currentMode === 'plan'))) {
+          return { behavior: 'deny', message: 'Bot 定时任务无法等待交互确认，请在运行结果中说明需要用户处理的操作。' }
+        }
+
         // ── 参数校验守卫（所有模式、所有工具，优先于权限检查） ──
         const validationFailure = validateToolInput(toolName, input)
         if (validationFailure) {
@@ -1519,6 +1527,16 @@ export class AgentOrchestrator {
               return PLAN_MODE_READ_ONLY_PLANNING_TOOLS.has(toolName)
                 ? { behavior: 'allow' as const, updatedInput: input }
                 : { behavior: 'deny' as const, message: '计划模式下只能查询任务/日程，不能修改本地规划数据，请在计划审批通过后再执行' }
+            }
+            if (scheduledBot && toolName.startsWith('mcp__automation__')
+              && toolName !== 'mcp__automation__list_workspaces'
+              && toolName !== 'mcp__automation__list_automations'
+              && toolName !== 'mcp__automation__get_automation') {
+              return { behavior: 'deny', message: '计划模式的 Bot 定时任务只能查询定时任务。' }
+            }
+            if (scheduledBot && (toolName === 'mcp__collaboration__delegate_agent'
+              || toolName === 'mcp__collaboration__delegate_agents' || toolName === 'mcp__collaboration__continue_delegation')) {
+              return { behavior: 'deny', message: '计划模式的 Bot 定时任务不能启动直接执行的协作子会话。' }
             }
             // 其他 MCP 工具维持既有策略：计划模式下允许调研用 MCP。
             if (toolName.startsWith('mcp__')) {
@@ -2190,7 +2208,7 @@ export class AgentOrchestrator {
 
           // Plan 模式：仅本地会话在规划完成后注入“接受计划”建议。
           // 外部 Bridge（例如 Slack）已在其所属渠道提供审批交互，不能在桌面输入框留下残留草稿。
-          if (input.triggeredBy !== 'external' && initialPermissionMode === 'plan' && planModeEntered && this.activeSessions.has(sessionId)) {
+          if (input.triggeredBy !== 'external' && !scheduledBot && initialPermissionMode === 'plan' && planModeEntered && this.activeSessions.has(sessionId)) {
             this.eventBus.emit(sessionId, {
               kind: 'sdk_message',
               message: { type: 'prompt_suggestion', suggestion: '请执行该计划' } as unknown as SDKMessage,

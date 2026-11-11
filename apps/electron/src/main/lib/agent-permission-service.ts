@@ -173,19 +173,32 @@ export class AgentPermissionService {
     options: CanUseToolOptions,
     sendToRenderer: (request: PermissionRequest) => void,
   ): Promise<PermissionResult> {
+    if (options.signal.aborted) return Promise.resolve({ behavior: 'deny', message: '操作已中止' })
     const request: PermissionRequest = {
       ...this.buildPermissionRequest(sessionId, toolName, input, options),
       dangerLevel: 'dangerous',
       allowAlways: false,
     }
-    sendToRenderer(request)
     return new Promise<PermissionResult>((resolve) => {
-      this.pendingPermissions.set(request.requestId, { resolve, request })
-      options.signal.addEventListener('abort', () => {
-        if (!this.pendingPermissions.has(request.requestId)) return
+      const abort = (): void => {
         this.pendingPermissions.delete(request.requestId)
-        resolve({ behavior: 'deny' as const, message: '操作已中止' })
-      }, { once: true })
+        resolve({ behavior: 'deny', message: '操作已中止' })
+      }
+      this.pendingPermissions.set(request.requestId, {
+        request,
+        resolve: (result) => {
+          options.signal.removeEventListener('abort', abort)
+          resolve(result)
+        },
+      })
+      options.signal.addEventListener('abort', abort, { once: true })
+      try {
+        sendToRenderer(request)
+      } catch (error) {
+        options.signal.removeEventListener('abort', abort)
+        this.pendingPermissions.delete(request.requestId)
+        throw error
+      }
     })
   }
 

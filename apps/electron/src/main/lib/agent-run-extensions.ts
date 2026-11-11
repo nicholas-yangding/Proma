@@ -4,4 +4,5 @@ import type { ToolDefinition } from '@earendil-works/pi-coding-agent'
 export interface AgentRunExtensions {
   piCustomTools?: ToolDefinition[]
   systemPromptAppend?: string
+  scheduledBot?: true
 }

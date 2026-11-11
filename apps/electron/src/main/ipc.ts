@@ -7,12 +7,15 @@
 import { ipcMain, nativeTheme, shell, dialog, BrowserWindow, app, clipboard, nativeImage } from 'electron'
 import type { WebContents } from 'electron'
 import { registerBotsIpcHandlers } from './lib/bots-ipc'
+import { getBotsService } from './lib/bots-service-instance'
+import { botIdSchema } from './lib/bots-validation'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { existsSync, realpathSync, readFileSync, writeFileSync, mkdirSync, statSync } from 'node:fs'
 import { realpath, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { createHash } from 'node:crypto'
-import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, AGENT_ISLAND_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, SLACK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, AUTOMATION_IPC_CHANNELS, PLANNING_IPC_CHANNELS, VAULT_IPC_CHANNELS, PLANNING_CONFLICT_ERROR, MAX_ATTACHMENT_SIZE, isPromaPermissionMode, normalizePathForCompare, removeMcpServerFromConfig, TERMINAL_IPC_CHANNELS } from '@proma/shared'
+import { z } from 'zod'
+import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, AGENT_ISLAND_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, SLACK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, AUTOMATION_IPC_CHANNELS, PLANNING_IPC_CHANNELS, VAULT_IPC_CHANNELS, PLANNING_CONFLICT_ERROR, MAX_ATTACHMENT_SIZE, isPromaPermissionMode, normalizePathForCompare, removeMcpServerFromConfig, TERMINAL_IPC_CHANNELS, CREATE_BOT_TOOL_NAME } from '@proma/shared'
 import { USER_PROFILE_IPC_CHANNELS, SETTINGS_IPC_CHANNELS, SCRATCH_PAD_IPC_CHANNELS, QUICK_TASK_IPC_CHANNELS, VOICE_DICTATION_IPC_CHANNELS, APP_ICON_IPC_CHANNELS, DOCK_BADGE_IPC_CHANNELS, STORAGE_IPC_CHANNELS, WINDOWS_AGENT_ISLAND_IPC_CHANNELS, TRAY_IPC_CHANNELS } from '../types'
 import type {
   QuickTaskSubmitInput,
@@ -1438,7 +1441,6 @@ export function registerIpcHandlers(): void {
   }
   registerBotsIpcHandlers({
     assertRenderer: assertMainTerminalRenderer,
-    getWindow: getMainWindow,
     resolveFileReference: (file, sessionIds) => {
       const path = realpathSync(file.path)
       const info = statSync(path)
@@ -3662,6 +3664,13 @@ export function registerIpcHandlers(): void {
     AGENT_IPC_CHANNELS.PERMISSION_RESPOND,
     async (event, response: PermissionResponse): Promise<void> => {
       const { requestId, behavior, alwaysAllow } = response
+      const request = permissionService.getPendingRequests().find((pending) => pending.requestId === requestId)
+      if (request?.toolName === CREATE_BOT_TOOL_NAME && (
+        getMainWindow()?.webContents.id !== event.sender.id
+        || event.senderFrame?.frameTreeNodeId !== event.sender.mainFrame.frameTreeNodeId
+      )) {
+        throw new Error('仅 Proma 主窗口可以批准创建 Bot。')
+      }
       const sessionId = permissionService.respondToPermission(requestId, behavior, alwaysAllow)
 
       // 发送 permission_resolved 事件给渲染进程
@@ -6035,7 +6044,7 @@ export function registerIpcHandlers(): void {
     validateAutomationNotificationTargets(i.notificationTargets)
   }
 
-
+  const automationBotExecutorSchema = z.object({ kind: z.literal('bot'), botId: botIdSchema }).strict()
 
   const validateAutomationScheduleComplete = (
     input: Partial<CreateAutomationInput | UpdateAutomationInput>,
@@ -6085,10 +6094,11 @@ export function registerIpcHandlers(): void {
       if (!input || typeof input !== 'object') throw new Error('input 必须是对象')
       if (!isNonEmptyString(input.name)) throw new Error('name 必填')
       if (!isNonEmptyString(input.prompt)) throw new Error('prompt 必填')
-      // channelId / workspaceId 允许为空（草稿态），但此时任务不能被启用
       validateAutomationFields(input)
       validateAutomationScheduleComplete(input)
-      const a = createAutomation(input)
+      const executor = automationBotExecutorSchema.optional().parse(input.executor)
+      if (executor) (await getBotsService()).getActiveBot(executor.botId)
+      const a = createAutomation({ ...input, executor })
       broadcastAutomationsChanged()
       return a
     }
@@ -6101,11 +6111,18 @@ export function registerIpcHandlers(): void {
       if (!isNonEmptyString(input.id)) throw new Error('id 必填')
       if (input.name !== undefined && !isNonBlankString(input.name)) throw new Error('name 不能为空')
       if (input.prompt !== undefined && !isNonBlankString(input.prompt)) throw new Error('prompt 不能为空')
+      const executor = automationBotExecutorSchema.nullish().parse(input.executor)
+      const needsBotLookup = executor || (input.active === true && executor === undefined && getAutomation(input.id)?.executor)
+      const bots = needsBotLookup ? await getBotsService() : undefined
       const existing = getAutomation(input.id)
       if (!existing) return undefined
+      const selectedExecutor = executor === undefined ? existing.executor : executor
+      if (selectedExecutor && bots && (
+        selectedExecutor.botId !== existing.executor?.botId || (input.active === true && !existing.active)
+      )) bots.getActiveBot(selectedExecutor.botId)
       validateAutomationFields(input)
       validateAutomationScheduleComplete(input, existing)
-      const a = updateAutomation(input)
+      const a = updateAutomation({ ...input, executor })
       broadcastAutomationsChanged()
       return a
     }
@@ -6126,6 +6143,11 @@ export function registerIpcHandlers(): void {
     async (_, id: string, active: boolean): Promise<Automation | undefined> => {
       if (!isNonEmptyString(id)) throw new Error('id 必填')
       if (typeof active !== 'boolean') throw new Error('active 必须是 boolean')
+      if (active && getAutomation(id)?.executor) {
+        const bots = await getBotsService()
+        const executor = getAutomation(id)?.executor
+        if (executor) bots.getActiveBot(executor.botId)
+      }
       const a = updateAutomation({ id, active })
       broadcastAutomationsChanged()
       return a

@@ -113,6 +113,7 @@ export interface PiBuiltinToolsContext {
   permissionMode?: PromaPermissionMode
   getPermissionMode?: () => PromaPermissionMode | undefined
   triggeredBy?: 'user' | 'automation' | 'delegation' | 'external'
+  scheduledBot?: boolean
   /** Windows 设备是否已有可供 Pi Bash 使用的 Git Bash 或 WSL。 */
   windowsShellAvailable?: boolean
   /** Windows 上省略 shell 时使用用户最近一次明确选择的 profile。 */
@@ -268,6 +269,7 @@ function summarizeAutomation(
     runCount: a.runCount ?? 0,
     completedAt: a.completedAt,
     sessionMode: a.sessionMode,
+    executor: a.executor,
     workspaceId: a.workspaceId,
     workspaceName: workspace?.name,
     workspaceSlug: workspace?.slug,
@@ -1608,6 +1610,7 @@ export async function buildPiBuiltinTools(
         permissionMode: ctx.permissionMode,
         getPermissionMode: ctx.getPermissionMode,
         triggeredBy: ctx.triggeredBy,
+        scheduledBot: ctx.scheduledBot,
       })
       tools.push(...collaborationTools as ToolDefinition[])
     } catch (error) {

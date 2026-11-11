@@ -1,5 +1,7 @@
 import type { PromaPermissionMode } from './agent'
 
+export const CREATE_BOT_TOOL_NAME = 'mcp__bots__create_bot'
+
 export type BotModelSelection =
   | { kind: 'default' }
   | { kind: 'fixed'; channelId: string; modelId: string }

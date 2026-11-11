@@ -30,6 +30,11 @@ const botFields = {
   permissionMode: z.enum(['plan', 'bypassPermissions']),
 }
 
+export const createBotToolInputSchema = z.object({
+  name: nameSchema,
+  instructions: instructionsSchema,
+}).strict()
+
 export const saveBotInputSchema = z.object({
   ...botFields,
   id: botIdSchema.optional(),
