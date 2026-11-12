@@ -3,7 +3,7 @@
  * 静态提示词只保留 Proma 独有、且未由运行时或工具 schema 强制的行为契约。
  */
 
-import type { AgentThinkingLevel, PromaPermissionMode, SessionWorkbenchLayout } from '@proma/shared'
+import type { PromaPermissionMode, SessionWorkbenchLayout } from '@proma/shared'
 import { lstatSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -16,7 +16,6 @@ import { hasRootProjectAgentsInstruction, type ProjectInstructionManifest } from
 import { buildLegacyProjectMigrationPrompt as buildLegacyProjectMigrationRequirement } from './project-instruction-migration'
 import type { BrowserUserContextSnapshot } from './browser-controller'
 import type { VaultUserContextSnapshot } from './vault-service'
-import { CURRENT_AGENT_DELEGATION_ALIAS } from '../../types'
 import type { AgentDelegationProfile, ProductivityToolsSettings } from '../../types'
 
 const WORKFLOW_PROMPT = `## 工作流
@@ -34,7 +33,6 @@ interface SystemPromptContext {
   permissionMode: PromaPermissionMode
   collaborationAvailable?: boolean
   currentModelId?: string
-  currentThinkingLevel?: AgentThinkingLevel
   agentDelegationProfiles?: readonly AgentDelegationProfile[]
   projectInstructions?: ProjectInstructionManifest
   /** Only explicit guided consent enables Agent-initiated AGENTS.md maintenance. */
@@ -143,11 +141,10 @@ export function buildSystemPrompt(ctx: SystemPromptContext): string {
     ctx.collaborationAvailable
       ? '## 协作\n独立并行探索或对抗审查才使用 \`collaboration\`；先建可见进度项，委派说明保持自包含，收敛结果后更新父任务。子会话不得继续委派。'
       : undefined,
-    ctx.collaborationAvailable && ctx.agentDelegationProfiles && ctx.permissionMode !== 'plan'
+    ctx.collaborationAvailable && ctx.agentDelegationProfiles?.length && ctx.permissionMode !== 'plan'
       ? [
         '### 可调度的 Agent',
-        '按任务选择合适的别名。调用 mcp__collaboration__delegate_agent 或 mcp__collaboration__delegate_agents 时，传入 alias（不带 @）。并行任务应有互不冲突的修改范围。等结果返回后再汇总。',
-        `- @${CURRENT_AGENT_DELEGATION_ALIAS}：${ctx.currentModelId ?? '当前模型'}，推理强度 ${ctx.currentThinkingLevel ?? '当前档位'}。适合用当前模型独立处理子任务。`,
+        '可用下列配置的别名委派。调用 mcp__collaboration__delegate_agent 或 mcp__collaboration__delegate_agents 时，传入 alias（不带 @），并省略 modelId。并行任务应有互不冲突的修改范围。等结果返回后再汇总。',
         ...ctx.agentDelegationProfiles.map(({ alias, modelId, thinkingLevel, description }) =>
           `- @${alias}：${modelId}，默认推理强度 ${thinkingLevel}${description ? `。用途：${JSON.stringify(description)}` : ''}`),
       ].join('\n')

@@ -134,7 +134,7 @@ export function AgentDelegationSettings(): React.ReactElement {
         <SettingsCard>
           <SettingsRow
             label={`@${CURRENT_AGENT_DELEGATION_ALIAS}`}
-            description="使用当前会话的模型和推理强度执行独立任务。"
+            description="在消息中手动点名，使用当前会话的模型和推理强度执行独立任务。"
           />
           {profiles.map((profile) => {
             const target = channels.find((item) => item.id === profile.channelId)

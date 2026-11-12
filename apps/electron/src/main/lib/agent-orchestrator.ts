@@ -1611,7 +1611,6 @@ export class AgentOrchestrator {
         permissionMode: initialPermissionMode,
         collaborationAvailable,
         agentDelegationProfiles: availableProfiles,
-        currentThinkingLevel: piThinkingLevel,
         currentModelId: selectedModelId,
         projectInstructions,
         projectKnowledgeMaintenanceApproved,

@@ -696,27 +696,32 @@ function resolveDelegationTarget(
   ctx: CollaborationToolContext,
   parent: AgentSessionMeta | undefined,
   args: DelegateAgentArgs,
+  origin: 'tool' | 'mention' | 'continuation',
 ): DelegationTarget {
   const thinkingLevel = assertThinkingLevel(args.thinkingLevel)
-  if (args.alias === undefined) {
+  const alias = args.alias?.trim().toLowerCase()
+  const modelId = args.modelId?.trim()
+  if (!alias) {
     return {
       channelId: ctx.channelId,
-      modelId: args.modelId === undefined
-        ? ctx.modelId?.trim() || undefined
-        : assertEnabledModelForChannel({
+      modelId: modelId
+        ? assertEnabledModelForChannel({
             channelId: ctx.channelId,
-            modelId: args.modelId,
+            modelId,
             purpose: '创建协作子会话',
-          }),
+          })
+        : ctx.modelId?.trim() || undefined,
       thinkingLevel,
     }
   }
 
-  assertAliasDelegationAllowed(ctx, parent)
-  if (args.modelId !== undefined) {
-    throw new Error('命名 Agent 委派不能同时指定 modelId')
+  if (origin === 'tool' && (alias === CURRENT_AGENT_DELEGATION_ALIAS || alias === `@${CURRENT_AGENT_DELEGATION_ALIAS}`)) {
+    throw new Error('@self 仅供用户在消息中手动点名')
   }
-  const alias = args.alias.trim().toLowerCase()
+  assertAliasDelegationAllowed(ctx, parent)
+  if (modelId) {
+    throw new Error('命名 Agent 委派不能同时指定 modelId。使用别名时省略 modelId，按当前渠道模型委派时省略 alias。')
+  }
   if (alias === CURRENT_AGENT_DELEGATION_ALIAS) {
     return {
       alias,
@@ -749,16 +754,9 @@ function getAvailableAgentModels(ctx: CollaborationToolContext): Record<string, 
   const currentModelId = ctx.modelId?.trim() || undefined
   const summary = listEnabledAgentModelsForChannel(ctx.channelId, '读取协作子会话可用模型')
   const currentModelAvailable = summary.models.some((model) => model.id === currentModelId)
-  const self = {
-    alias: CURRENT_AGENT_DELEGATION_ALIAS,
-    channelId: ctx.channelId,
-    modelId: currentModelId,
-    thinkingLevel: ctx.thinkingLevel,
-    description: '复用当前主会话的渠道、模型和思考强度，独立执行任务',
-  }
   const delegationAliases = supportsDelegationAliases(ctx)
     && getAliasPermissionMode(ctx, getAgentSessionMeta(ctx.sessionId)) !== 'plan'
-    ? [...(currentModelAvailable ? [self] : []), ...listAvailableAgentDelegationProfiles(getDelegationProfiles(ctx))]
+    ? listAvailableAgentDelegationProfiles(getDelegationProfiles(ctx))
     : []
   return {
     channelId: summary.channelId,
@@ -773,7 +771,7 @@ function getAvailableAgentModels(ctx: CollaborationToolContext): Record<string, 
     modelCount: summary.models.length,
     delegationAliases,
     note: summary.models.length > 0
-      ? '创建协作子会话时，可传 delegationAliases 中的 alias，或从 models 中选择当前渠道的 modelId。'
+      ? '使用 delegationAliases 中的 alias 时省略 modelId。使用当前渠道的 modelId 时省略 alias。两项都省略时使用当前模型。'
       : '当前渠道没有启用的 Agent 模型，请先在渠道设置中启用模型。',
   }
 }
@@ -823,7 +821,9 @@ function startDelegation(
   const task = assertNonBlank(args.task, 'task')
   const delegationId = randomUUID()
   const role = args.role ?? 'custom'
-  const { alias, channelId, modelId: effectiveModelId, thinkingLevel } = resolveDelegationTarget(ctx, parent, args)
+  const { alias, channelId, modelId: effectiveModelId, thinkingLevel } = resolveDelegationTarget(
+    ctx, parent, args, source ? 'mention' : 'tool',
+  )
   const title = normalizeTitle(args.title, alias
     ? `@${alias} · ${task.replace(/@agent:/gi, '@').replace(/^(?:@[a-z][a-z0-9-]*\s+)+/i, '')}`
     : `协作：${task}`)
@@ -1042,14 +1042,19 @@ export function buildPiCollaborationTools(
     Type.Literal('xhigh'),
     Type.Literal('max'),
   ], { description: '子会话思考强度；未传则使用别名配置或新会话默认值' }))
-  const aliasType = Type.Optional(Type.String({ description: '可选 Agent 别名，不带 @，不能与 modelId 同时传入' }))
+  const aliasType = Type.Optional(Type.String({
+    description: '配置中的 Agent 别名（不带 @）。传入 alias 时省略 modelId。self 仅供用户手动点名。',
+  }))
+  const modelIdType = Type.Optional(Type.String({
+    description: '当前渠道已启用的模型 ID。传入 modelId 时省略 alias。',
+  }))
 
   const delegateItemType = Type.Object({
     title: Type.Optional(Type.String({ description: '子会话标题' })),
     role: roleType,
     task: Type.String({ description: '发送给子 Agent 的完整任务说明' }),
     expectedOutput: Type.Optional(Type.String({ description: '希望子 Agent 最终返回的格式或要点' })),
-    modelId: Type.Optional(Type.String({ description: '可选目标模型 ID' })),
+    modelId: modelIdType,
     alias: aliasType,
     thinkingLevel: thinkingLevelType,
   })
@@ -1081,7 +1086,7 @@ export function buildPiCollaborationTools(
         role: roleType,
         task: Type.String({ description: '发送给子 Agent 的完整任务说明，必须自包含必要上下文' }),
         expectedOutput: Type.Optional(Type.String({ description: '希望子 Agent 最终返回的格式或要点' })),
-        modelId: Type.Optional(Type.String({ description: '可选目标模型 ID' })),
+        modelId: modelIdType,
         alias: aliasType,
         thinkingLevel: thinkingLevelType,
       }),
@@ -1360,7 +1365,9 @@ export function buildPiCollaborationTools(
           throw new Error(`委派正在运行中，无法追加指令: ${args.delegationId}`)
         }
         if (record.alias) {
-          const target = resolveDelegationTarget(ctx, getAgentSessionMeta(ctx.sessionId), { alias: record.alias, task: args.message })
+          const target = resolveDelegationTarget(
+            ctx, getAgentSessionMeta(ctx.sessionId), { alias: record.alias, task: args.message }, 'continuation',
+          )
           if (target.channelId !== record.channelId || target.modelId !== record.modelId) {
             throw new Error(`Agent 别名 @${record.alias} 的渠道或模型已变更，请启动新的委派`)
           }

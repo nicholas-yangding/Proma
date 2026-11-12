@@ -682,19 +682,19 @@ describe('Agent 命名委派', () => {
     expect(routedChildren).toHaveLength(2)
   })
 
-  test('Given 主 Agent 的可用别名 When 通过 Pi 工具委派 Then 使用目标渠道且允许覆盖思考强度', async () => {
+  test('Given 已启用的模型与别名 When 通过 Pi 工具委派 Then 忽略空目标字段并只允许配置的别名', async () => {
     const { createChannel, updateChannel } = await import('./channel-manager')
     const { buildPiCollaborationTools } = await import('./agent-collaboration-tools')
     const { setHeadlessAgentRunner } = await import('./agent-headless-runner-registry')
-    const createTestChannel = (name: string, modelId: string) => createChannel({
+    const createTestChannel = (name: string, ...modelIds: string[]) => createChannel({
       name,
       provider: 'openai',
       baseUrl: 'https://example.invalid',
       apiKey: '',
-      models: [{ id: modelId, name: modelId, enabled: true }],
+      models: modelIds.map((id) => ({ id, name: id, enabled: true })),
       enabled: true,
     })
-    const parentChannel = createTestChannel('自主调度主渠道', 'parent-model')
+    const parentChannel = createTestChannel('自主调度主渠道', 'parent-model', 'gpt-6.1-sol')
     const targetChannel = createTestChannel('自主调度目标渠道', 'target-model')
     const parent = manager.createAgentSession('自主调度主 Agent', parentChannel.id, 'workspace-a', 'parent-model')
     let profileChannelId = targetChannel.id
@@ -723,26 +723,44 @@ describe('Agent 命名委派', () => {
       }
       return result.details
     }
+    const routedChildren: string[] = []
     setHeadlessAgentRunner(async (input, callbacks) => {
-      expect(input.channelId).toBe(targetChannel.id)
-      expect(input.modelId).toBe('target-model')
+      routedChildren.push(`${input.channelId}/${input.modelId}`)
       callbacks.onComplete([{ id: input.sessionId, role: 'assistant', content: '独立结果', createdAt: 1 }])
     })
 
+    expect(await runTool('delegate_agent', { alias: '', modelId: 'gpt-6.1-sol', task: '分析方案' }))
+      .toMatchObject({ delegation: { modelId: 'gpt-6.1-sol', resultSummary: '独立结果' } })
+
     const catalog = await runTool('list_available_agent_models', {})
     expect(catalog).toMatchObject({
-      delegationAliases: expect.arrayContaining([
+      delegationAliases: [
         { alias: 'worker', channelId: targetChannel.id, modelId: 'target-model', thinkingLevel: 'high' },
-      ]),
+      ],
     })
     await expect(runTool('delegate_agent', { alias: 'worker', modelId: 'target-model', task: '分析方案' }))
       .rejects.toThrow('不能同时指定 modelId')
-    const result = await runTool('delegate_agent', { alias: 'worker', thinkingLevel: 'low', task: '分析方案' })
+    await expect(runTool('delegate_agent', { alias: ' Self ', modelId: '', task: '分析方案' }))
+      .rejects.toThrow('@self 仅供用户在消息中手动点名')
+    const result = await runTool('delegate_agent', { alias: 'worker', modelId: '', thinkingLevel: 'low', task: '分析方案' })
     expect(result).toMatchObject({
       delegation: { alias: 'worker', modelId: 'target-model', thinkingLevel: 'low', resultSummary: '独立结果' },
     })
-    const children = manager.listAgentSessions().filter((session) => session.parentSessionId === parent.id)
-    expect(children).toMatchObject([{ channelId: targetChannel.id, modelId: 'target-model', reasoningLevel: 'low' }])
+    const batch = await runTool('delegate_agents', { items: [
+      { alias: 'self', modelId: 'gpt-6.1-sol', task: '并行分析' },
+      { alias: ' ', modelId: 'gpt-6.1-sol', task: '并行分析' },
+    ] })
+    expect(batch).toMatchObject({
+      createdCount: 1,
+      failures: [{ index: 0, error: '@self 仅供用户在消息中手动点名' }],
+      delegations: [{ modelId: 'gpt-6.1-sol' }],
+    })
+    expect(routedChildren).toEqual([
+      `${parentChannel.id}/gpt-6.1-sol`, `${targetChannel.id}/target-model`, `${parentChannel.id}/gpt-6.1-sol`,
+    ])
+    const namedChild = manager.listAgentSessions().find((session) =>
+      session.parentSessionId === parent.id && session.delegationAlias === 'worker')
+    expect(namedChild).toMatchObject({ channelId: targetChannel.id, modelId: 'target-model', reasoningLevel: 'low' })
 
     planMode = true
     const planCatalog = await runTool('list_available_agent_models', {})
@@ -751,17 +769,14 @@ describe('Agent 命名委派', () => {
     planMode = false
     updateChannel(targetChannel.id, { enabled: false })
     const unavailableCatalog = await runTool('list_available_agent_models', {})
-    expect(unavailableCatalog).toMatchObject({ delegationAliases: [{ alias: 'self' }] })
+    expect(unavailableCatalog).toMatchObject({ delegationAliases: [] })
 
     profileChannelId = parentChannel.id
     profileModelId = 'parent-model'
     await expect(runTool('continue_delegation', {
-      delegationId: children[0]?.sourceDelegationId,
+      delegationId: namedChild?.sourceDelegationId,
       message: '继续分析',
     })).rejects.toThrow('渠道或模型已变更')
-
-    updateChannel(parentChannel.id, { enabled: false })
-    await expect(runTool('delegate_agent', { alias: 'self', task: '分析方案' })).rejects.toThrow('未启用')
   })
 
   test('Given 只有磁盘上的中断委派 When 重试同一条消息 Then 回报中断并复用原会话', async () => {
